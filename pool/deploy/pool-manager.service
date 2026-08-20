@@ -1,0 +1,19 @@
+[Unit]
+Description=OLX Proxy Pool Manager
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxy-pool
+EnvironmentFile=/etc/proxy-pool.env
+ExecStart=/usr/bin/python3 -m pool.app
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pool-manager
+
+[Install]
+WantedBy=multi-user.target

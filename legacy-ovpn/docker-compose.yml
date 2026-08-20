@@ -1,0 +1,28 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    ports:
+      - "8888:8888"   # HTTP proxy
+    volumes:
+      # ganti nama file sesuai profil yang mau dites
+      - type: bind
+        source: ./vpn-profile/${PROFILE:-sg-aes-128-cbc-udp-ip.ovpn}
+        target: /gluetun/custom.conf
+        read_only: true
+        # gagal terang-terangan kalau profilnya belum ada, bukan diam-diam bikin direktori kosong
+        bind: { create_host_path: false }
+    environment:
+      VPN_SERVICE_PROVIDER: custom
+      VPN_TYPE: openvpn
+      OPENVPN_CUSTOM_CONFIG: /gluetun/custom.conf
+      OPENVPN_USER: ${PIA_USER}
+      OPENVPN_PASSWORD: ${PIA_PASS}
+      HTTPPROXY: "on"
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"
+      # ponytail: firewall gluetun default menolak subnet LAN; ini biar proxy bisa dipakai dari host
+      FIREWALL_OUTBOUND_SUBNETS: 172.16.0.0/12
+      TZ: Asia/Jakarta
+    restart: unless-stopped

@@ -1,0 +1,55 @@
+# JANGAN diterapkan sebelum pool manager di VM terbukti stabil beberapa
+# hari (lihat PRD-proxy-pool.html#fase, Fase 3: "jalankan berdampingan
+# dengan vpn-pia/vpn-proton yang sudah ada dulu, jangan menggantinya").
+#
+# Ini cuma jembatan satu arah: ambil GET /proxies dari pool manager, tulis
+# ke file/proxies.txt di PVC yang sama yang sudah dibaca getconfig()
+# (config/scrape.py:208) - TIDAK ADA kode crawler yang berubah, TIDAK
+# menyentuh vpn-pia/vpn-proton yang sudah ada.
+#
+# Verifikasi path PVC: worker asl-crawler-pricing-engine-v2-worker-
+# getdetailpage-prod me-mount crawler-prod-pvc-fs di /app/assets - jadi
+# file/proxies.txt relatif terhadap root PVC, bukan terhadap /app/assets.
+#
+# Terapkan manual setelah siap:
+#   kubectl --context asl-k8s apply -f pool/deploy/crawler-prod-cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: proxy-pool-sync
+  namespace: crawler-prod
+spec:
+  # Tiap 15 menit - jauh lebih sering daripada rotasi harian/verifikasi per
+  # jam pool manager sendiri, supaya konsumen cepat dapat daftar terbaru
+  # begitu pool manager mengeluarkan slot yang diblokir.
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sync
+              image: curlimages/curl:8.10.1
+              command: ["sh", "-c"]
+              args:
+                - |
+                  set -e
+                  curl -fsS "$POOL_URL/proxies" -o /tmp/p
+                  [ -s /tmp/p ]
+                  cp /tmp/p /mnt/crawler/file/proxies.txt
+                  echo "tersinkron: $(wc -l < /tmp/p) baris"
+              env:
+                - name: POOL_URL
+                  value: "http://10.0.0.51:8080"
+              volumeMounts:
+                - name: crawler-fs
+                  mountPath: /mnt/crawler
+          volumes:
+            - name: crawler-fs
+              persistentVolumeClaim:
+                claimName: crawler-prod-pvc-fs

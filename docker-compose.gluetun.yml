@@ -1,0 +1,36 @@
+# Satu compose untuk provider bawaan gluetun (Proton WireGuard / PIA OpenVPN). Daftar server
+# dan kunci tiap server sudah ada di dalam image, jadi tidak ada file config yang di-download.
+# Dipakai lewat ./sweep.sh; jarang dipanggil langsung.
+#
+#   GLUETUN_PROVIDER  protonvpn | private internet access
+#   GLUETUN_VPN_TYPE  wireguard | openvpn
+#   SERVER_HOSTNAMES  pemilih server untuk proton   (lihat: ./servers.sh proton sea)
+#   SERVER_NAMES      pemilih server untuk pia      (lihat: ./servers.sh pia sea)
+#   PROTON_KEY        private key WireGuard Proton, dari .env
+#   PIA_USER/PIA_PASS kredensial PIA, dari ~/.pia-credentials
+#
+# project sendiri biar `up` di sini tidak menghapus container dari docker-compose.yml (PIA custom)
+name: proxy-vpn-native
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest
+    container_name: gluetun-native
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    ports:
+      - "${PROXY_PORT:-8888}:8888"   # HTTP proxy; ganti PROXY_PORT kalau 8888 dipakai container lain
+    environment:
+      VPN_SERVICE_PROVIDER: ${GLUETUN_PROVIDER:?set lewat ./sweep.sh}
+      VPN_TYPE: ${GLUETUN_VPN_TYPE:-openvpn}
+      WIREGUARD_PRIVATE_KEY: ${PROTON_KEY:-}
+      OPENVPN_USER: ${PIA_USER:-}
+      OPENVPN_PASSWORD: ${PIA_PASS:-}
+      SERVER_HOSTNAMES: ${SERVER_HOSTNAMES:-}
+      SERVER_NAMES: ${SERVER_NAMES:-}
+      HTTPPROXY: "on"
+      HTTPPROXY_LISTENING_ADDRESS: ":8888"
+      # firewall gluetun default menolak subnet LAN; ini biar proxy bisa dipakai dari host
+      FIREWALL_OUTBOUND_SUBNETS: 172.16.0.0/12
+      TZ: Asia/Jakarta
+    restart: unless-stopped

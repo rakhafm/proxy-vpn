@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>OLX Proxy Pool</title>
+<style>
+  :root {
+    --ground: #fafafa; --surface: #fff; --line: #e2e2e2;
+    --ink: #1a1a1a; --ink-soft: #666;
+    --ok: #1a7a3c; --ok-bg: #e6f4ea;
+    --warn: #8a5a00; --warn-bg: #fdf3d9;
+    --bad: #a3261f; --bad-bg: #fbe9e7;
+    --mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground); color: var(--ink); margin: 0; padding: 24px;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); margin: 0 0 20px; font-size: 12.5px; }
+  h2 { font-size: 1rem; margin: 28px 0 10px; }
+  .actions { display: flex; gap: 10px; margin-bottom: 20px; }
+  button {
+    font: inherit; padding: 7px 14px; border: 1px solid var(--line); border-radius: 5px;
+    background: var(--surface); cursor: pointer;
+  }
+  button:hover { background: var(--ground); }
+  .note { color: var(--ink-soft); font-size: 12px; margin: -14px 0 20px; }
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-soft); background: var(--ground); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.detail { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--ink-soft); max-width: 480px; }
+  td.mono { font-family: var(--mono); font-size: 12.5px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+  .pill.active, .pill.ok { background: var(--ok-bg); color: var(--ok); }
+  .pill.connecting, .pill.dup_ip, .pill.connect_fail, .pill.probe_error { background: var(--warn-bg); color: var(--warn); }
+  .pill.blocked, .pill.dead, .pill.error { background: var(--bad-bg); color: var(--bad); }
+  .empty { color: var(--ink-soft); padding: 16px 12px; }
+  .banner { padding: 10px 14px; border-radius: 6px; margin: 0 0 16px; font-size: 13.5px; }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  button[disabled] { opacity: .6; cursor: wait; }
+</style>
+</head>
+<body>
+
+  <h1>OLX Proxy Pool</h1>
+  <p class="sub">{{ slots|selectattr('status','equalto','active')|list|length }}/{{ slots|length }} slot aktif &middot; halaman menyegarkan sendiri tiap 30 detik</p>
+
+  {% set done = request.args.get('done') %}
+  {% if done %}
+    {% set job_label = 'Rotasi' if done == 'rotate' else 'Verifikasi' %}
+    {% if request.args.get('ok') == '1' %}
+      <div class="banner ok">&#10003; {{ job_label }} selesai barusan.</div>
+    {% else %}
+      <div class="banner bad">&#10007; {{ job_label }} gagal - lihat log <code>pool.app</code> di terminal untuk detailnya.</div>
+    {% endif %}
+  {% endif %}
+
+  <form method="post" action="/jobs/rotate" style="display:inline">
+    <input type="hidden" name="from" value="ui">
+    <button type="submit">Rotasi sekarang</button>
+  </form>
+  <form method="post" action="/jobs/verify" style="display:inline">
+    <input type="hidden" name="from" value="ui">
+    <button type="submit">Verifikasi sekarang</button>
+  </form>
+  <p class="note">Rotasi bisa makan waktu beberapa menit per slot (mencoba kandidat sampai lolos) - tombol berubah jadi "Sedang berjalan..." begitu diklik, dan halaman menunggu sampai job selesai sebelum kembali dengan status di atas.</p>
+  <script>
+    document.querySelectorAll("form").forEach(function (f) {
+      f.addEventListener("submit", function () {
+        var btn = f.querySelector("button");
+        btn.disabled = true;
+        btn.textContent = "Sedang berjalan…";
+      });
+    });
+  </script>
+
+  <h2>Slot</h2>
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Slot</th><th>Provider</th><th>Server</th><th>Exit IP</th><th>Negara / ASN</th><th>Status</th><th>Lolos terakhir</th></tr>
+      </thead>
+      <tbody>
+        {% for s in slots %}
+        <tr>
+          <td class="mono">{{ s.id }} <span style="color:var(--ink-soft)">:{{ s.port }}</span></td>
+          <td>{{ s.provider }}</td>
+          <td class="mono">{{ s.server or '-' }}</td>
+          <td class="mono">{{ s.exit_ip or '-' }}</td>
+          <td>{{ s.negara or '-' }}{% if s.org %} &middot; {{ s.org }}{% endif %}</td>
+          <td><span class="pill {{ s.status }}">{{ s.status }}</span></td>
+          <td title="{{ s.last_ok_at or '' }}">{{ s.last_ok_at | ago }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="empty">Belum ada slot terkonfigurasi.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Riwayat probe (30 terakhir)</h2>
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Waktu</th><th>Slot</th><th>Jenis</th><th>Verdict</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for p in probes %}
+        <tr>
+          <td title="{{ p.at }}">{{ p.at | ago }}</td>
+          <td class="mono">{{ p.slot_id }}</td>
+          <td>{{ p.kind }}</td>
+          <td><span class="pill {{ p.verdict }}">{{ p.verdict }}</span></td>
+          <td class="detail">{{ p.detail or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="empty">Belum ada riwayat probe.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</body>
+</html>

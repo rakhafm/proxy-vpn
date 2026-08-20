@@ -1,0 +1,1224 @@
+<title>OLX Proxy Pool Manager</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700;800&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --ground: #FBFAFB;
+    --surface: #FFFFFF;
+    --surface-sunk: #F3F0F3;
+    --line: #E2DCE3;
+    --line-strong: #C9BFCB;
+    --ink: #1D1620;
+    --ink-soft: #4E4453;
+    --ink-faint: #7A6E80;
+    --accent: #7B2D5E;
+    --accent-soft: #F5E9F0;
+    --ok: #3F6B4E;
+    --ok-soft: #E8F1EA;
+    --warn: #8F6115;
+    --warn-soft: #F9EFDC;
+    --bad: #92332A;
+    --bad-soft: #F9E8E5;
+    --measure: 68ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #141017;
+      --surface: #1C1721;
+      --surface-sunk: #241E2A;
+      --line: #332B3A;
+      --line-strong: #4A3F52;
+      --ink: #F0EBF2;
+      --ink-soft: #BFB4C6;
+      --ink-faint: #8C8093;
+      --accent: #E39BC4;
+      --accent-soft: #33203C;
+      --ok: #8CC79E;
+      --ok-soft: #1E2E23;
+      --warn: #E0B267;
+      --warn-soft: #322616;
+      --bad: #E8988C;
+      --bad-soft: #331E1B;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #141017;
+    --surface: #1C1721;
+    --surface-sunk: #241E2A;
+    --line: #332B3A;
+    --line-strong: #4A3F52;
+    --ink: #F0EBF2;
+    --ink-soft: #BFB4C6;
+    --ink-faint: #8C8093;
+    --accent: #E39BC4;
+    --accent-soft: #33203C;
+    --ok: #8CC79E;
+    --ok-soft: #1E2E23;
+    --warn: #E0B267;
+    --warn-soft: #322616;
+    --bad: #E8988C;
+    --bad-soft: #331E1B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  @media (min-width: 1080px) {
+    .shell { grid-template-columns: 208px minmax(0, 1fr); gap: 56px; padding-right: 40px; }
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 64px 0 28px;
+    margin-bottom: 48px;
+  }
+
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-family: "Archivo", ui-sans-serif, sans-serif;
+    font-weight: 800;
+    font-size: clamp(2.4rem, 6vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -0.032em;
+    text-wrap: balance;
+    margin: 0 0 20px;
+  }
+
+  .standfirst {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0;
+  }
+
+  .meta-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin-top: 28px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+  .meta-strip b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---------- toc ---------- */
+
+  .toc { display: none; }
+
+  @media (min-width: 1080px) {
+    .toc {
+      display: block;
+      position: sticky;
+      top: 32px;
+      align-self: start;
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+    .toc p {
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--ink-faint);
+      margin: 0 0 14px;
+    }
+    .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+    .toc a { color: var(--ink-soft); text-decoration: none; border-left: 2px solid var(--line); padding-left: 11px; display: block; }
+    .toc a:hover, .toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); }
+  }
+
+  /* ---------- body flow ---------- */
+
+  main { grid-column: 1 / -1; min-width: 0; }
+  @media (min-width: 1080px) { main { grid-column: 2; } }
+
+  section { margin: 0 0 72px; }
+
+  h2 {
+    font-family: "Archivo", ui-sans-serif, sans-serif;
+    font-weight: 700;
+    font-size: 1.7rem;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0 0 6px;
+    padding-top: 8px;
+  }
+
+  .h2-rule {
+    height: 1px;
+    background: var(--line-strong);
+    margin: 0 0 26px;
+  }
+
+  h3 {
+    font-family: "Archivo", ui-sans-serif, sans-serif;
+    font-weight: 600;
+    font-size: 1.1rem;
+    letter-spacing: -0.01em;
+    margin: 38px 0 10px;
+  }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 18px; }
+  ul, ol { margin: 0 0 18px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+
+  strong { font-weight: 600; color: var(--ink); }
+  em { font-style: italic; color: var(--ink-soft); }
+
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.86em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--ink);
+    overflow-wrap: break-word;
+  }
+
+  pre {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    background: var(--surface-sunk);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0 0 22px;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  /* ---------- tables ---------- */
+
+  .tw { overflow-x: auto; margin: 0 0 24px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 11px 15px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-sunk);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; white-space: nowrap; }
+
+  /* ---------- state pills ---------- */
+
+  .pill {
+    display: inline-block;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+
+  /* ---------- callout ---------- */
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 20px 22px;
+    margin: 0 0 24px;
+    max-width: var(--measure);
+  }
+  .callout.risk { border-top-color: var(--bad); }
+  .callout > :last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 9px;
+  }
+  .callout.risk .label { color: var(--bad); }
+
+  /* ---------- phases ---------- */
+
+  .phases { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; max-width: none; }
+  .phase {
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr);
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 18px 20px;
+    margin: 0;
+  }
+  .phase:first-child { border-radius: 5px 5px 0 0; }
+  .phase:last-child { border-radius: 0 0 5px 5px; }
+  .phase + .phase { border-top: none; }
+  .phase-n {
+    font-family: "Archivo", sans-serif;
+    font-weight: 800;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .phase h4 { font-family: "Archivo", sans-serif; font-size: 1rem; font-weight: 600; margin: 0 0 6px; }
+  .phase p { margin: 0; font-size: 15px; color: var(--ink-soft); max-width: none; }
+
+  /* ---------- diagram ---------- */
+
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 20px;
+    margin: 0 0 12px;
+    overflow-x: auto;
+  }
+  .caption { font-size: 13.5px; color: var(--ink-faint); max-width: var(--measure); margin: 0 0 24px; }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, .toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  @media (min-width: 1080px) { footer { grid-column: 2; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">PRD · Draf 1 · belum disetujui</p>
+    <h1>OLX Proxy Pool Manager</h1>
+    <p class="standfirst">
+      Layanan yang memelihara sekumpulan exit VPN yang terbukti bisa membuka
+      <code>olx.co.id</code>, mengeluarkan yang sudah diblokir, dan menyajikan daftar yang
+      masih hidup lewat satu URL — dengan halaman pantau supaya keadaannya terlihat.
+    </p>
+    <div class="meta-strip">
+      <span><b>Konsumen</b> asl-crawler-pricing-engine-v2</span>
+      <span><b>Provider</b> PIA · Proton VPN</span>
+      <span><b>Basis</b> gluetun + Docker</span>
+      <span><b>Penempatan</b> VM Ubuntu, satu network dengan k8s</span>
+      <span><b>Tanggal</b> 19 Agustus 2026</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Daftar isi">
+    <p>Isi</p>
+    <ol>
+      <li><a href="#masalah">Masalah</a></li>
+      <li><a href="#bukti">Bukti terukur</a></li>
+      <li><a href="#tujuan">Tujuan</a></li>
+      <li><a href="#arsitektur">Arsitektur</a></li>
+      <li><a href="#teknologi">Teknologi</a></li>
+      <li><a href="#slot">Model slot</a></li>
+      <li><a href="#job">Job harian &amp; per jam</a></li>
+      <li><a href="#api">API</a></li>
+      <li><a href="#konsumen">Integrasi konsumen</a></li>
+      <li><a href="#penempatan">Penempatan</a></li>
+      <li><a href="#keputusan">Keputusan desain</a></li>
+      <li><a href="#risiko">Risiko</a></li>
+      <li><a href="#kapasitas">Kapasitas</a></li>
+      <li><a href="#fase">Fase</a></li>
+      <li><a href="#terbuka">Keputusan terbuka</a></li>
+      <li><a href="#sukses">Ukuran berhasil</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="masalah">
+      <h2>Masalah</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Crawler pricing engine mengambil halaman listing OLX. OLX memakai Akamai Bot Manager
+        yang memblokir <strong>per alamat IP</strong>, dan reputasi sebuah IP bergeser dalam
+        hitungan jam. Akibatnya tidak ada daftar exit yang bisa ditulis sekali lalu dipakai
+        selamanya — daftarnya harus diperiksa terus dan dipangkas sendiri.
+      </p>
+      <p>Keadaan sekarang semuanya manual:</p>
+      <ul>
+        <li>
+          Dua exit hidup di namespace <code>crawler-prod</code>: <code>vpn-pia</code>
+          (AS137409 GSL Networks) dan <code>vpn-proton</code> (AS212238 Datacamp).
+        </li>
+        <li>
+          Daftar proxy tinggal di <code>file/proxies.txt</code> pada PVC
+          <code>crawler-prod-pvc-fs</code> (CephFS, RWX), diisi tangan.
+        </li>
+        <li>
+          Tidak ada yang memeriksa apakah sebuah exit masih bisa membuka OLX. Healthcheck
+          gluetun hanya menguji tunnel-nya hidup, bukan apakah OLX menerimanya.
+        </li>
+        <li>Tidak ada riwayat, tidak ada notifikasi, tidak ada cara memantau selain SSH.</li>
+      </ul>
+      <div class="callout">
+        <span class="label">Yang sudah benar dan dipertahankan</span>
+        <p>
+          <code>getconfig()</code> di <code>config/scrape.py:208</code> membaca
+          <code>proxies.txt</code> <strong>setiap kali dipanggil</strong>, bukan sekali saat pod
+          start. Jadi mengganti isi file itu langsung berlaku tanpa restart worker. Mekanisme
+          penyebaran daftar sudah ada — yang belum ada adalah yang mengisinya.
+        </p>
+      </div>
+    </section>
+
+    <section id="bukti">
+      <h2>Bukti terukur</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Semua angka di bawah hasil pengujian 19 Agustus 2026, bukan asumsi. Ini yang
+        membentuk desainnya.
+      </p>
+
+      <h3>Exit IP bergeser, dan nama server bukan pegangan</h3>
+      <p>
+        <code>node-vn-01.protonvpn.net</code> dijalankan tiga kali berturut-turut: entry
+        endpoint berganti, exit IP konsisten — tapi berbeda dari yang tercatat empat jam
+        sebelumnya.
+      </p>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Waktu</th><th>Entry endpoint</th><th>Exit IP</th><th>Verdict OLX</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">06:01 UTC</td><td class="mono">—</td><td class="mono">159.26.115.123</td><td><span class="pill ok">lolos</span></td></tr>
+            <tr><td class="num">~10:00 UTC</td><td class="mono">185.159.156.85</td><td class="mono">188.214.152.229</td><td><span class="pill bad">deny</span></td></tr>
+            <tr><td class="num">~10:02 UTC</td><td class="mono">188.214.152.226</td><td class="mono">188.214.152.229</td><td><span class="pill bad">deny</span></td></tr>
+            <tr><td class="num">~10:04 UTC</td><td class="mono">188.214.152.226</td><td class="mono">188.214.152.229</td><td><span class="pill bad">deny</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Stabil dalam hitungan menit, bergeser dalam hitungan jam. <strong>Menyimpan “profil
+        yang lolos” lalu memakainya besok tidak menjamin apa pun</strong> — yang tersimpan
+        cuma nama, dan nama itu menunjuk IP lain nanti. Karena itu sistem ini menyimpan
+        <em>verdict tentang slot yang sedang berjalan</em>, bukan daftar nama server favorit.
+      </p>
+
+      <h3>Beberapa hostname berbagi satu exit IP</h3>
+      <p>
+        Pada sapuan yang sama, lima hostname — <code>node-sg-34</code>,
+        <code>node-sg-38</code>, <code>node-sg-42</code>, <code>node-th-01</code>,
+        <code>node-vn-01</code> — semuanya keluar dari <code>159.26.115.123</code>. Proton
+        memakai NAT keluar bersama, dan sebagian lokasi (Thailand, Vietnam) dilayani hub
+        Singapura. Artinya memilih “tiga profil berbeda” bisa berarti <strong>satu exit
+        IP</strong>. Sistem wajib men-dedupe pada exit IP, bukan pada nama server.
+      </p>
+
+      <h3>Tiga kelas jawaban, dan hanya satu terbaca tanpa browser</h3>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Ukuran</th><th>Penanda</th><th>Arti</th><th>Terbaca <code>curl</code>?</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="num">~2.2 KB</td>
+              <td class="mono">bm-verify</td>
+              <td>Interstitial Akamai — browser lolos, <code>curl</code> mandek di sini</td>
+              <td><span class="pill warn">ambigu</span></td>
+            </tr>
+            <tr>
+              <td class="num">~5.6 KB</td>
+              <td class="mono">id="referenceNum"</td>
+              <td>Deny keras — browser pun ditolak</td>
+              <td><span class="pill ok">ya</span></td>
+            </tr>
+            <tr>
+              <td class="num">~1.6 MB</td>
+              <td class="mono">5/5 marker</td>
+              <td>Halaman asli, hanya tercapai setelah JS dijalankan</td>
+              <td><span class="pill bad">tidak</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        IP yang bersih pun menjawab <code>curl</code> dengan interstitial 2.2 KB dan
+        <strong>0/5 marker</strong> — sama seperti IP yang diblokir. Jadi
+        <code>curl</code> cukup untuk memastikan sesuatu <em>buruk</em>, tapi vonis
+        <em>bersih</em> butuh browser sungguhan. Pembagian job harian/per-jam di PRD ini
+        mengikuti pembagian itu.
+      </p>
+      <p>
+        Marker yang dipakai adalah <code>OLX_SEARCH_MARKERS</code> dari
+        <code>utility/utility.py:76</code> — kriteria yang sama dipakai pipeline produksi,
+        sudah diverifikasi cocok dengan HTML yang divonis lolos. Probe dan crawler tidak akan
+        berbeda pendapat.
+      </p>
+    </section>
+
+    <section id="tujuan">
+      <h2>Tujuan</h2>
+      <div class="h2-rule"></div>
+      <ul>
+        <li>Menjaga <strong>minimal 3 exit hidup</strong> yang terbukti bisa membuka OLX, lintas dua provider agar ASN-nya tidak tunggal.</li>
+        <li>Mengeluarkan exit yang diblokir dari daftar <strong>dalam ≤1 jam</strong> tanpa campur tangan manusia.</li>
+        <li>Menyajikan daftar yang masih hidup lewat satu URL yang bisa dipakai layanan mana pun.</li>
+        <li>Halaman pantau: keadaan tiap slot, exit IP, riwayat probe, kapan terakhir lolos.</li>
+        <li>Tidak butuh perubahan kode di crawler.</li>
+      </ul>
+
+      <h3>Bukan tujuan</h3>
+      <ul>
+        <li>Menembus atau menyelesaikan tantangan bot Akamai. Sistem ini memilih exit yang tidak diblokir, bukan melewati pemblokiran.</li>
+        <li>Menaikkan laju crawl. Tujuannya mengurangi permintaan yang gagal, bukan menambah jumlah permintaan.</li>
+        <li>Mengganti jalur file <code>proxies.txt</code>. Jalur itu tetap jadi cara crawler membaca daftar.</li>
+        <li>Autentikasi berlapis atau multi-tenant. Ini alat internal satu tim.</li>
+      </ul>
+    </section>
+
+    <section id="arsitektur">
+      <h2>Arsitektur</h2>
+      <div class="h2-rule"></div>
+      <div class="diagram">
+<pre class="mermaid">
+flowchart TB
+  subgraph HOST["VM Ubuntu 10.0.0.x — satu network dengan node k8s"]
+    MGR["Pool Manager<br/>API · UI · scheduler · SQLite"]
+    G1["gluetun slot-1 :9001"]
+    G2["gluetun slot-2 :9002"]
+    GN["gluetun slot-N :900N"]
+  end
+
+  MGR -. "docker run / rm" .-> G1
+  MGR -. "docker run / rm" .-> G2
+  MGR -. "docker run / rm" .-> GN
+
+  MGR == "probe: browser (harian) / curl (per jam)" ==> OLX["olx.co.id<br/>Akamai Bot Manager"]
+
+  subgraph K8S["namespace crawler-prod"]
+    SYNC["CronJob sync — curl -f /proxies"]
+    PVC[("PVC crawler-prod-pvc-fs<br/>file/proxies.txt")]
+    WRK["worker crawler<br/>getconfig() baca tiap panggilan"]
+  end
+
+  SYNC -->|"GET /proxies"| MGR
+  SYNC -->|"tulis kalau tidak kosong"| PVC
+  PVC --> WRK
+  WRK ==>|"HTTP via proxy"| G1
+  G1 ==> OLX
+</pre>
+      </div>
+      <p class="caption">
+        Garis tebal membawa trafik nyata; garis putus-putus adalah kendali. Manager tidak
+        pernah menyentuh trafik crawler — ia hanya menyalakan, menguji, dan mematikan slot,
+        lalu menerbitkan daftarnya.
+      </p>
+      <p>
+        Manager memegang tiga tanggung jawab yang sengaja tidak dipecah jadi layanan
+        terpisah, karena ketiganya berbagi satu state dan memecahnya hanya menambah cara
+        untuk tidak sinkron:
+      </p>
+      <ul>
+        <li><strong>Orkestrator</strong> — menyalakan dan mematikan container gluetun lewat Docker.</li>
+        <li><strong>Prober</strong> — menjalankan uji OLX dan menuliskan verdict.</li>
+        <li><strong>Penerbit</strong> — API dan halaman pantau di atas state yang sama.</li>
+      </ul>
+    </section>
+
+    <section id="teknologi">
+      <h2>Teknologi</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Aturannya satu: <strong>tidak ada teknologi baru kalau yang sudah dipakai crawler
+        bisa.</strong> Ini bukan soal selera. Probe yang memakai stack berbeda dari crawler
+        bisa memberi vonis berbeda untuk IP yang sama — dan itu justru merusak gunanya.
+        Semua yang ada di tabel ini sudah ada di <code>requirements.txt</code> crawler
+        atau di stdlib.
+      </p>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Lapisan</th><th>Pilihan</th><th>Alasan</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Bahasa</td>
+              <td class="mono">Python 3.12</td>
+              <td>Bahasa crawler. Bawaan Ubuntu 24.04.</td>
+            </tr>
+            <tr>
+              <td>API</td>
+              <td class="mono">Flask 3</td>
+              <td>Sudah di <code>requirements.txt</code>, dan sudah dipakai di <code>utility/health.py:8</code>. Tidak perlu FastAPI.</td>
+            </tr>
+            <tr>
+              <td>Halaman pantau</td>
+              <td class="mono">Jinja2 + HTML/CSS</td>
+              <td>Bawaan Flask. Tanpa build step, tanpa React, tanpa <code>npm</code>.</td>
+            </tr>
+            <tr>
+              <td>State</td>
+              <td class="mono">SQLite</td>
+              <td>Stdlib. Satu penulis, beberapa baris per jam.</td>
+            </tr>
+            <tr>
+              <td>Orkestrasi slot</td>
+              <td class="mono">docker CLI · subprocess</td>
+              <td>Tidak perlu <code>docker-py</code>. Output <code>docker</code> mudah dibaca saat mendiagnosa.</td>
+            </tr>
+            <tr>
+              <td>Probe harian</td>
+              <td class="mono">Selenium 4.12 + Chrome</td>
+              <td>Dijalankan di <em>image probe sendiri</em>, kode vonis disalin dari crawler — lihat catatan di bawah.</td>
+            </tr>
+            <tr>
+              <td>Probe per jam</td>
+              <td class="mono">binary <code>curl</code></td>
+              <td>Bukan library <code>requests</code> — fingerprint TLS/HTTP2-nya beda di mata Akamai, terbukti bikin <code>requests</code> macet total sementara <code>curl</code> dapat balasan &lt;2 detik. Lihat catatan di bawah.</td>
+            </tr>
+            <tr>
+              <td>Penentu lolos</td>
+              <td class="mono">olx_search_markers()</td>
+              <td>Fungsi milik pipeline sendiri, lewat beautifulsoup4. Bukan kriteria baru.</td>
+            </tr>
+            <tr>
+              <td>Metrik</td>
+              <td class="mono">prometheus-client</td>
+              <td>Konvensi mereka sudah ada — <code>config/scrape.py:18</code> sudah punya Counter <code>proxies</code> dan <code>nonproxies</code>.</td>
+            </tr>
+            <tr>
+              <td>Scheduler</td>
+              <td class="mono">threading.Timer</td>
+              <td>Dua job berulang. Tidak perlu Celery atau APScheduler.</td>
+            </tr>
+            <tr>
+              <td>Supervisor proses</td>
+              <td class="mono">systemd</td>
+              <td>VM, bukan k8s.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Probe harian berjalan di image sendiri, bukan image crawler</h3>
+      <div class="callout">
+        <span class="label">Koreksi dari rancangan awal — dua kali</span>
+        <p>
+          Koreksi pertama (masih benar): jalur OLX crawler yang sebenarnya adalah
+          <code>scrapeselenium()</code> di <code>config/scrape.py:101</code> — <strong>Selenium
+          + Chrome</strong>, opsi dari <code>_chrome_options()</code>
+          (<code>--proxy-server</code>, UA dari <code>agent.txt</code>,
+          <code>--headless=new</code>, <code>--disable-blink-features=AutomationControlled</code>).
+          Bukan Playwright, dan bukan <code>probe.js</code> (Node + Playwright) yang dipakai
+          menyapu — fingerprint keduanya berbeda dari crawler produksi.
+        </p>
+        <p>
+          Koreksi kedua, ketemu waktu implementasi: rancangan awal saya menjalankan probe
+          <em>di dalam image crawler produksi</em> (`harbor.aslcode.dev/...`) supaya Chrome-nya
+          identik. Itu ternyata berlebihan — yang benar-benar perlu identik cuma <em>opsi
+          launch Chrome dan kriteria vonisnya</em>, bukan seluruh image crawler (yang juga
+          membawa Selenium, dependensi scraping lain, dan butuh login registry Harbor). Sekarang
+          probe jalan di <strong>image sendiri</strong> (<code>pool/probe/</code>) yang isinya
+          cuma Chrome + chromedriver + dua fungsi yang disalin tertulis dari repo crawler
+          (<code>_chrome_options()</code>, <code>olx_search_markers()</code> — lihat sitasi baris
+          asal di komentar <code>pool/probe/olx_probe.py</code>). Efeknya: VM tidak perlu kredensial
+          registry apa pun, dan build/rilis image crawler tidak lagi mempengaruhi probe.
+        </p>
+      </div>
+      <p>Probe harian dijalankan begini (lihat <code>pool/probes.py</code>):</p>
+<pre><code>docker run --rm --network host \
+  -e PROXIES="http://127.0.0.1:9001" \
+  -v pool/probe/olx_probe.py:/app/olx_probe.py:ro \
+  -v pool/probe-out:/out \
+  olx-pool-probe:latest \
+  python3 olx_probe.py</code></pre>
+      <p>
+        Script probe-nya <strong>di-mount, bukan dibangun ke dalam image</strong> — mengubah
+        logika vonis tidak perlu <code>docker build</code> ulang. HTML + screenshot yang
+        dirender ikut disimpan ke <code>pool/probe-out/</code> lewat mount kedua — bukti nyata
+        untuk tiap probe, dipangkas otomatis lewat <code>PROBE_OUT_RETAIN_DAYS</code> supaya
+        tidak numpuk tak terbatas di disk VM.
+      </p>
+      <p>
+        Efek sampingnya tetap seperti rancangan awal: <strong>Chrome, chromedriver, dan
+        Selenium tidak perlu dipasang di VM sama sekali</strong> — cuma Docker dan Python.
+        <code>--network host</code> dipakai supaya container probe bisa menjangkau slot di
+        <code>127.0.0.1:9001</code>. Bedanya, Chrome-nya sekarang <em>disalin instalasinya</em>
+        dari <code>Dockerfile</code> crawler (bukan <em>meminjam image-nya</em>) — kalau versi
+        Chrome di image crawler berubah, itu tidak otomatis mengikuti di sini, harus
+        disinkronkan manual. Trade-off yang sadar diambil untuk melepas ketergantungan Harbor.
+      </p>
+    </section>
+
+    <section id="slot">
+      <h2>Model slot</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Abstraksi intinya adalah <strong>slot</strong>: identitas tetap dengan port tetap,
+        yang isinya boleh berganti. Konsumen memakai <code>http://pool-host:9001</code> dan URL
+        itu tidak pernah berubah walau server VPN di belakangnya dirotasi tiap hari.
+      </p>
+      <p>
+        Ini alasan yang sama dengan catatan di manifest k8s yang sudah ada — satu Deployment
+        per exit, bukan replicas — tapi dipakai untuk masalah yang berbeda: di sana supaya
+        pemilihan acak <code>getconfig()</code> benar-benar berarti IP berbeda, di sini supaya
+        rotasi tidak mengubah alamat yang sudah dipegang konsumen.
+      </p>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Kolom</th><th>Isi</th><th>Catatan</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">id</td><td>slot-1 … slot-N</td><td>tetap seumur hidup sistem</td></tr>
+            <tr><td class="mono">port</td><td>9000 + n</td><td>tetap; jadi bagian URL konsumen</td></tr>
+            <tr><td class="mono">provider</td><td>pia | proton</td><td>diseimbangkan antar slot</td></tr>
+            <tr><td class="mono">server</td><td>hostname / nama server</td><td>berganti tiap rotasi harian</td></tr>
+            <tr><td class="mono">exit_ip</td><td>IP keluar terukur</td><td>kunci dedupe antar slot</td></tr>
+            <tr><td class="mono">status</td><td>active · blocked · connecting · dead</td><td>hanya <code>active</code> masuk daftar terbit</td></tr>
+            <tr><td class="mono">last_ok_at</td><td>timestamp lolos terakhir</td><td>dasar peringatan basi</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Dua tabel pendamping: <code>probes</code> menyimpan riwayat tiap uji (verdict, ukuran,
+        nomor referensi Akamai, jumlah marker) sebagai bahan halaman pantau, dan
+        <code>candidates</code> mengingat server mana yang sudah dicoba beserta hasilnya
+        supaya rotasi tidak mengulang pilihan yang baru saja gagal. SQLite cukup — beban
+        tulisnya beberapa baris per jam.
+      </p>
+    </section>
+
+    <section id="job">
+      <h2>Job harian &amp; per jam</h2>
+      <div class="h2-rule"></div>
+
+      <h3>Rotasi harian — 03:00 Asia/Jakarta</h3>
+      <p>Mengganti isi tiap slot dan memastikan yang terpasang benar-benar bisa membuka OLX.</p>
+      <ol>
+        <li>Segarkan daftar kandidat dari <code>gluetun format-servers</code> (tanpa login).</li>
+        <li>Untuk tiap slot: ambil kandidat berikutnya, jalankan gluetun, tunggu healthy.</li>
+        <li>Ukur exit IP. Kalau sudah dipakai slot lain, buang — lanjut kandidat berikutnya.</li>
+        <li><strong>Probe browser</strong>: harus mencapai 1.6 MB dan ≥1 marker pipeline.</li>
+        <li>Lolos → <span class="pill ok">active</span>. Gagal → coba kandidat berikutnya, maksimal 5 percobaan per slot.</li>
+        <li>Slot yang tetap gagal ditandai <span class="pill bad">dead</span> dan tidak diterbitkan.</li>
+      </ol>
+
+      <h3>Verifikasi per jam</h3>
+      <p>
+        Hanya memastikan yang sedang berjalan masih lolos. <strong>Tidak mengganti profil</strong>,
+        sesuai rancangan.
+      </p>
+      <ol>
+        <li>Untuk tiap slot <span class="pill ok">active</span>: probe <code>curl</code> murah.</li>
+        <li>Ketemu <code>id="referenceNum"</code> → tandai <span class="pill bad">blocked</span>, keluarkan dari daftar terbit.</li>
+        <li>Interstitial <code>bm-verify</code> → dianggap masih hidup; itu jawaban normal untuk <code>curl</code>.</li>
+        <li>Tunnel tidak menjawab sama sekali → <span class="pill warn">connecting</span>, dicoba lagi jam berikutnya.</li>
+      </ol>
+
+      <div class="callout risk">
+        <span class="label">Lubang yang sengaja dibiarkan terbuka</span>
+        <p>
+          Karena job per jam hanya <em>mengeluarkan</em> dan tidak pernah
+          <em>mengisi</em>, jumlah slot hidup hanya bisa turun sepanjang hari. Kalau tiga
+          slot terblokir jam 14:00, kolam tinggal nol sampai rotasi jam 03:00 besok.
+        </p>
+        <p>
+          Ini konsekuensi dari “per jam tanpa mengganti profil”. Mitigasinya sebuah flag
+          <code>HOURLY_REFILL</code> yang <strong>default mati</strong> agar sesuai rancangan;
+          kalau dinyalakan, slot yang baru diblokir langsung dirotasi saat itu juga —
+          hanya slot itu, tidak menyentuh yang lain. Saya sarankan menyalakannya setelah
+          rotasi harian terbukti stabil.
+        </p>
+      </div>
+    </section>
+
+    <section id="api">
+      <h2>API</h2>
+      <div class="h2-rule"></div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Endpoint</th><th>Balasan</th><th>Guna</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">GET /proxies</td><td><code>text/plain</code>, satu URL per baris</td><td>Drop-in untuk <code>proxies.txt</code></td></tr>
+            <tr><td class="mono">GET /proxies.json</td><td>url, provider, server, exit_ip, negara, last_ok_at</td><td>Konsumen yang butuh detail</td></tr>
+            <tr><td class="mono">GET /slots</td><td>State lengkap tiap slot</td><td>Diagnosa</td></tr>
+            <tr><td class="mono">GET /probes?limit=</td><td>Riwayat probe</td><td>Halaman pantau, telusur kejadian</td></tr>
+            <tr><td class="mono">GET /health</td><td>Kesehatan manager + jumlah slot hidup</td><td>Monitoring luar</td></tr>
+            <tr><td class="mono">POST /jobs/rotate</td><td>Menjalankan rotasi sekarang</td><td>Manual saat kolam kering</td></tr>
+            <tr><td class="mono">POST /jobs/verify</td><td>Menjalankan verifikasi sekarang</td><td>Manual</td></tr>
+            <tr><td class="mono">GET /</td><td>Halaman pantau</td><td>Yang kamu buka di browser</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout">
+        <span class="label">Keputusan: kolam kosong menjawab 503, bukan 200</span>
+        <p>
+          Kalau tidak ada slot hidup, <code>GET /proxies</code> membalas
+          <strong>503</strong> dengan badan kosong — bukan 200 dengan daftar kosong. Alasannya
+          ada di bagian berikut, dan ini pembeda antara sistem yang gagal dengan aman dan
+          sistem yang gagal diam-diam.
+        </p>
+      </div>
+    </section>
+
+    <section id="konsumen">
+      <h2>Integrasi konsumen</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Crawler tidak mengambil URL — <code>getconfig()</code> membaca env
+        <code>PROXIES</code> atau file <code>assets/file/proxies.txt</code>. Jadi jembatannya
+        satu CronJob kecil, dan <strong>tidak ada kode crawler yang berubah</strong>:
+      </p>
+<pre><code>curl -fsS "$POOL_URL/proxies" -o /tmp/p \
+  &amp;&amp; [ -s /tmp/p ] \
+  &amp;&amp; cp /tmp/p /app/assets/file/proxies.txt</code></pre>
+      <p>Tiga pengaman dalam satu baris itu, dan semuanya penting:</p>
+      <ul>
+        <li><code>-f</code> — gagal saat manager membalas 503, jadi file lama dibiarkan utuh.</li>
+        <li><code>-s /tmp/p</code> — menolak menulis file kosong.</li>
+        <li><code>cp</code> ke PVC — worker memungutnya pada panggilan <code>getconfig()</code> berikutnya, tanpa restart.</li>
+      </ul>
+      <div class="callout risk">
+        <span class="label">Kenapa file kosong berbahaya</span>
+        <p>
+          <code>proxies.txt</code> kosong membuat <code>len(PROXIESS) &gt; 0</code> bernilai
+          false, dan <code>getconfig()</code> mengembalikan <code>None</code> — worker lanjut
+          crawl <strong>tanpa proxy</strong>, langsung dari IP egress cluster. Itu justru IP
+          yang paling tidak boleh terekspos ke OLX, dan kegagalannya senyap: tidak ada error,
+          crawl tetap jalan, sampai IP cluster yang kena blokir.
+        </p>
+      </div>
+      <p>
+        Alternatifnya mengubah <code>scrape.py</code> agar mengambil URL langsung. Saya tidak
+        menyarankannya: itu menjadikan manager sebagai dependensi runtime tiap permintaan
+        crawl, sedangkan pola file di atas membuat manager mati hanya berarti daftarnya
+        berhenti disegarkan.
+      </p>
+    </section>
+
+    <section id="penempatan">
+      <h2>Penempatan</h2>
+      <div class="h2-rule"></div>
+      <p>
+        Manager dan seluruh slot gluetun berjalan di <strong>VM Ubuntu yang satu network
+        dengan node k8s</strong>. Ini menghapus penghalang terbesar rancangan berbasis
+        Docker: pod bisa menjangkau slot langsung lewat IP, tanpa Service, Ingress, atau
+        NodePort.
+      </p>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Elemen</th><th>Nilai terukur</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Node k8s</td><td class="mono">10.0.0.11–12 (master) · 10.0.0.21–24 (worker)</td></tr>
+            <tr><td>Distro &amp; runtime node</td><td class="mono">Ubuntu 24.04 · RKE2 v1.33.6 · containerd</td></tr>
+            <tr><td>Pod CIDR</td><td class="mono">10.42.0.0/16 (irisan /24 per node)</td></tr>
+            <tr><td>NetworkPolicy di <code>crawler-prod</code></td><td>Tidak ada — egress pod tidak dibatasi</td></tr>
+            <tr><td>VM pool</td><td class="mono">10.0.0.51 (<code>asl-prd-prod-crawler-proxy-1</code>), akses via <code>tsh ssh</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout risk">
+        <span class="label">VM ini lebih kecil dari asumsi Kapasitas</span>
+        <p>
+          Terukur langsung: <strong>1.9 GB RAM tanpa swap sama sekali</strong>, dan 9.2 GB disk
+          dengan ~3.9 GB tersisa. Tabel <a href="#kapasitas">Kapasitas</a> di bawah menghitung
+          kebutuhan 6 slot penuh berdasarkan batas atas limit manifest k8s (~2 GB) — pas-pasan
+          untuk RAM sekecil ini, apalagi tanpa jaring pengaman swap. Karena itu Fase 3 dimulai
+          dari <strong>3 slot</strong> (2 PIA + 1 Proton), bukan 6 — lihat
+          <code>pool/deploy/README.md</code>.
+        </p>
+      </div>
+
+      <h3>Aturan firewall</h3>
+      <p>
+        Trafik dari pod ke alamat di luar cluster CIDR biasanya di-SNAT menjadi IP node oleh
+        Canal, jadi VM akan melihat koneksi datang dari <code>10.0.0.21–24</code> — bukan dari
+        <code>10.42.x.x</code>. Tapi perilaku itu bergantung konfigurasi <code>ipMasq</code>,
+        jadi izinkan keduanya dan tidak perlu menebak:
+      </p>
+<pre><code>ufw allow from 10.0.0.0/24  to any port 8080      proto tcp   # API + halaman pantau
+ufw allow from 10.0.0.0/24  to any port 9001:9006 proto tcp   # slot proxy
+ufw allow from 10.42.0.0/16 to any port 8080      proto tcp
+ufw allow from 10.42.0.0/16 to any port 9001:9006 proto tcp</code></pre>
+      <div class="callout risk">
+        <span class="label">Jangan pernah ekspos port ini ke internet</span>
+        <p>
+          Port <code>9001–9006</code> adalah <strong>proxy HTTP terbuka tanpa autentikasi</strong>.
+          Terjangkau dari internet, keduanya langsung jadi relay terbuka yang dipakai orang lain —
+          bandwidth VPN kamu terpakai pihak asing, dan exit IP-nya ikut terbakar reputasinya oleh
+          trafik yang bukan milikmu. Batasi ke <code>10.0.0.0/24</code> dan
+          <code>10.42.0.0/16</code> saja, jangan berikan aturan <code>ufw allow 9001</code>
+          tanpa klausa <code>from</code>.
+        </p>
+      </div>
+
+      <h3>Prasyarat VM</h3>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Kebutuhan</th><th>Catatan</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Docker Engine</td>
+              <td>Menjalankan slot gluetun; butuh <code>NET_ADMIN</code></td>
+            </tr>
+            <tr>
+              <td>Modul kernel <code>tun</code></td>
+              <td><code>modprobe tun</code>, lalu permanenkan di <code>/etc/modules-load.d/tun.conf</code>. Tanpa ini gluetun tidak bisa membuat tunnel.</td>
+            </tr>
+            <tr>
+              <td>Python 3.12 + tiga paket apt</td>
+              <td>
+                <code>python3-flask</code>, <code>python3-requests</code>,
+                <code>python3-prometheus-client</code> — ketiganya ada di repo Ubuntu, jadi
+                <strong>tanpa <code>pip</code> dan tanpa venv</strong>. Sisanya stdlib:
+                <code>sqlite3</code>, <code>subprocess</code>, <code>threading</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>Registry</td>
+              <td>
+                <strong>Tidak perlu login registry apa pun</strong> — image probe
+                (<code>olx-pool-probe:latest</code>) di-build lokal di VM dari
+                <code>pool/probe/Dockerfile</code>, bukan ditarik dari Harbor. Chrome,
+                chromedriver, dan Selenium tidak perlu dipasang terpisah di VM — semuanya
+                di dalam image itu.
+              </td>
+            </tr>
+            <tr>
+              <td>Egress VM</td>
+              <td>UDP 51820 keluar (WireGuard Proton) dan UDP 1197 keluar (OpenVPN PIA)</td>
+            </tr>
+            <tr>
+              <td>systemd unit</td>
+              <td>Untuk manager: <code>Restart=on-failure</code>, aktif saat boot. Slot gluetun tetap container Docker dengan <code>--restart unless-stopped</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Manager dijalankan lewat systemd, bukan container, karena tugasnya justru menyuruh
+        Docker — menaruhnya di dalam container berarti memasang socket Docker ke dalam
+        container, tanpa keuntungan yang sepadan di VM yang memang khusus untuk ini.
+        Slot gluetun dan container probe tetap dikelola Docker seperti biasa.
+      </p>
+      <p>
+        <code>POOL_URL</code> untuk CronJob sync menjadi <code>http://10.0.0.x:8080</code>.
+      </p>
+    </section>
+
+    <section id="keputusan">
+      <h2>Keputusan desain</h2>
+      <div class="h2-rule"></div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Keputusan</th><th>Alasan</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Port slot tetap, isi slot berganti</td>
+              <td>URL konsumen tidak boleh ikut berubah saat rotasi harian.</td>
+            </tr>
+            <tr>
+              <td>Dedupe pada <code>exit_ip</code>, bukan nama server</td>
+              <td>Lima hostname Proton terbukti berbagi satu exit IP; dedupe pada nama akan menerbitkan satu IP sebagai tiga proxy.</td>
+            </tr>
+            <tr>
+              <td>Probe browser harian, <code>curl</code> per jam</td>
+              <td><code>curl</code> tidak bisa memvonis bersih, tapi bisa memvonis diblokir. Pakai yang murah untuk hal yang bisa dijawabnya.</td>
+            </tr>
+            <tr>
+              <td>503 saat kolam kosong</td>
+              <td>Supaya <code>curl -f</code> di sisi konsumen gagal dan file lama bertahan, alih-alih ditimpa jadi kosong.</td>
+            </tr>
+            <tr>
+              <td>Satu proses, bukan microservice</td>
+              <td>Orkestrator, prober, dan penerbit berbagi satu state. Memecahnya hanya menambah cara untuk tidak sinkron.</td>
+            </tr>
+            <tr>
+              <td>SQLite, bukan Postgres</td>
+              <td>Beban tulis beberapa baris per jam, satu penulis. Tidak ada yang dimenangkan dari server database.</td>
+            </tr>
+            <tr>
+              <td>Semua slot lolos ujian yang sama dengan pipeline</td>
+              <td>Memakai <code>OLX_SEARCH_MARKERS</code> milik crawler, jadi vonis pool dan vonis crawler tidak bisa berbeda.</td>
+            </tr>
+            <tr>
+              <td>Probe harian memakai image crawler produksi, bukan tooling sendiri</td>
+              <td>Chrome, chromedriver, dan opsi browser jadi identik dengan worker. Probe berstack lain bisa lolos padahal crawler ditolak.</td>
+            </tr>
+            <tr>
+              <td>Script probe di-mount, tidak dibangun ke image</td>
+              <td>Mengubah logika probe tidak menuntut rebuild dan rilis ulang image crawler.</td>
+            </tr>
+            <tr>
+              <td>Tidak ada dependensi baru di luar yang sudah dipakai crawler</td>
+              <td>Flask, Selenium, prometheus-client, beautifulsoup4 semuanya sudah ada di <code>requirements.txt</code>. Yang baru cuma SQLite dari stdlib.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="risiko">
+      <h2>Risiko</h2>
+      <div class="h2-rule"></div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Risiko</th><th>Dampak</th><th>Penanganan</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Kolam kering di tengah hari</td>
+              <td><span class="pill bad">tinggi</span></td>
+              <td>Notifikasi saat slot hidup &lt; 3; flag <code>HOURLY_REFILL</code> tersedia</td>
+            </tr>
+            <tr>
+              <td>Konsumen diam-diam crawl tanpa proxy</td>
+              <td><span class="pill bad">tinggi</span></td>
+              <td>503 + <code>curl -f</code> + cek file tidak kosong</td>
+            </tr>
+            <tr>
+              <td>Satu kunci WireGuard Proton untuk banyak slot</td>
+              <td><span class="pill bad">tinggi</span></td>
+              <td>Kunci Proton adalah identitas per-perangkat. Butuh <strong>satu kunci berbeda per slot Proton</strong>, dibuat manual di halaman akun. Tidak bisa diotomatiskan dan harus disiapkan sebelum Fase 1.</td>
+            </tr>
+            <tr>
+              <td>Akamai mengubah tanda halaman</td>
+              <td><span class="pill warn">sedang</span></td>
+              <td>Kalau <em>semua</em> slot gagal serentak, curigai pendeteksinya lebih dulu, bukan IP-nya. Notifikasi membedakan “semua gagal” dari “sebagian gagal”.</td>
+            </tr>
+            <tr>
+              <td>Slot proxy terjangkau dari luar jaringan</td>
+              <td><span class="pill bad">tinggi</span></td>
+              <td>Proxy tanpa autentikasi. <code>ufw</code> wajib berklausa <code>from</code>; verifikasi dari luar bahwa 8080 dan 9001–9006 tertutup sebelum Fase 3 dianggap selesai.</td>
+            </tr>
+            <tr>
+              <td>Akses socket Docker setara root di VM</td>
+              <td><span class="pill warn">sedang</span></td>
+              <td>VM khusus untuk ini saja; manager tidak menerima input dari luar selain dua endpoint POST</td>
+            </tr>
+            <tr>
+              <td>Probe browser berat dan mudah flaky</td>
+              <td><span class="pill warn">sedang</span></td>
+              <td>Satu probe sekali jalan, ada percobaan ulang; hanya dipakai job harian</td>
+            </tr>
+            <tr>
+              <td>Batas koneksi simultan provider</td>
+              <td><span class="pill warn">sedang</span></td>
+              <td>PIA mengizinkan banyak koneksi per akun. Perlu dipastikan untuk jumlah slot yang dipilih.</td>
+            </tr>
+            <tr>
+              <td>Ketentuan layanan &amp; laju permintaan OLX</td>
+              <td><span class="pill warn">sedang</span></td>
+              <td>Sistem ini tidak menaikkan laju crawl. Laju tetap diatur di sisi crawler, bukan ditambah karena proxy jadi lebih banyak.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="kapasitas">
+      <h2>Kapasitas</h2>
+      <div class="h2-rule"></div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Ukuran</th><th class="num">Nilai</th><th>Dasar</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Slot</td><td class="num">6</td><td>3 PIA + 3 Proton, agar ASN tidak tunggal</td></tr>
+            <tr><td>RAM gluetun per slot</td><td class="num">64–256 MB</td><td>Sesuai limit manifest k8s yang sudah jalan</td></tr>
+            <tr><td>RAM total slot</td><td class="num">~1.5 GB</td><td>6 × 256 MB batas atas</td></tr>
+            <tr><td>Puncak RAM probe browser</td><td class="num">~500 MB</td><td>Satu Chrome sekali jalan, tidak paralel</td></tr>
+            <tr><td>Durasi rotasi harian</td><td class="num">≤20 menit</td><td>6 slot × maks 5 kandidat × ~40 s</td></tr>
+            <tr><td>Durasi verifikasi per jam</td><td class="num">~30 detik</td><td>6 slot × ~5 s <code>curl</code></td></tr>
+            <tr><td>Pertumbuhan SQLite</td><td class="num">&lt;5 MB / tahun</td><td>~30 baris probe per hari</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="fase">
+      <h2>Fase</h2>
+      <div class="h2-rule"></div>
+      <ol class="phases">
+        <li class="phase">
+          <span class="phase-n">1</span>
+          <div>
+            <h4>Inti, jalan lokal <span class="pill ok">selesai</span></h4>
+            <p>
+              Slot, orkestrasi Docker, kedua job, SQLite, <code>GET /proxies</code>, image probe
+              sendiri (<code>pool/probe/</code>). Diverifikasi jalan 6 slot (3 PIA + 3 Proton)
+              di mesin lokal, bukti HTML+screenshot per probe di <code>pool/probe-out/</code>.
+            </p>
+          </div>
+        </li>
+        <li class="phase">
+          <span class="phase-n">2</span>
+          <div>
+            <h4>Halaman pantau <span class="pill ok">selesai</span></h4>
+            <p>
+              Keadaan slot, exit IP dan ASN, riwayat probe, umur verdict terakhir, tombol rotasi
+              dan verifikasi manual dengan status selesai/gagal. Jinja2 + HTML/CSS, diverifikasi
+              di browser.
+            </p>
+          </div>
+        </li>
+        <li class="phase">
+          <span class="phase-n">3</span>
+          <div>
+            <h4>Pindah ke VM Ubuntu, sambungkan konsumen <span class="pill warn">artefak siap, belum diterapkan</span></h4>
+            <p>
+              VM target sudah ada: <code>10.0.0.51</code> (<code>asl-prd-prod-crawler-proxy-1</code>),
+              1.9 GB RAM tanpa swap — lebih kecil dari asumsi awal, jadi dimulai dari
+              <strong>3 slot</strong> (bukan 6), naik bertahap setelah RAM/disk terpantau
+              longgar. Skrip deploy, unit systemd, aturan <code>ufw</code>, dan manifest
+              CronJob <code>crawler-prod</code> (tervalidasi <code>--dry-run=server</code>)
+              ada di <code>pool/deploy/</code> — dijalankan manual, bukan otomatis dari sini.
+              CronJob sengaja <strong>belum diterapkan</strong>: jalan berdampingan dengan
+              <code>vpn-pia</code>/<code>vpn-proton</code> yang sudah ada dulu, sampai kolam
+              di VM terbukti tidak pernah kosong sehari penuh.
+            </p>
+          </div>
+        </li>
+        <li class="phase">
+          <span class="phase-n">4</span>
+          <div>
+            <h4>Notifikasi</h4>
+            <p>
+              Peringatan saat slot hidup &lt; 3, saat semua slot gagal serentak, dan saat
+              rotasi harian tidak selesai.
+            </p>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section id="terbuka">
+      <h2>Keputusan terbuka</h2>
+      <div class="h2-rule"></div>
+      <div class="callout">
+        <span class="label">Sudah terjawab — tempat menjalankan</span>
+        <p>
+          VM Ubuntu satu network dengan node k8s. Rinciannya di
+          <a href="#penempatan">Penempatan</a>. Ini menghapus satu-satunya penghalang yang
+          bisa membatalkan rancangan berbasis Docker, dan membuat alternatif “manager di dalam
+          k8s mengelola Deployment lewat API k8s” tidak lagi perlu dipertimbangkan.
+        </p>
+        <p>
+          Alamat VM-nya sudah terisi: <code>10.0.0.51</code>
+          (<code>asl-prd-prod-crawler-proxy-1</code>) — lihat
+          <a href="#penempatan">Penempatan</a> untuk kondisi terukurnya (RAM/disk lebih kecil
+          dari asumsi awal).
+        </p>
+      </div>
+      <p>Yang masih terbuka, semuanya lebih kecil:</p>
+      <ul>
+        <li>Jumlah slot — dimulai dari 3 (2 PIA + 1 Proton) karena keterbatasan RAM VM, bukan 6 seperti usulan awal; naik bertahap setelah dipantau.</li>
+        <li>Apakah empat manifest exit tambahan yang sudah saya buat di <code>k8s/prod/</code> tetap dipakai, atau digantikan sistem ini.</li>
+        <li>Tujuan notifikasi — Slack, email, atau cukup halaman pantau dulu.</li>
+        <li>Apakah <code>HOURLY_REFILL</code> dinyalakan sejak awal.</li>
+        <li>Kapan CronJob <code>crawler-prod-cronjob.yaml</code> diterapkan — menunggu kolam di VM terbukti stabil beberapa hari dulu.</li>
+      </ul>
+    </section>
+
+    <section id="sukses">
+      <h2>Ukuran berhasil</h2>
+      <div class="h2-rule"></div>
+      <div class="tw">
+        <table>
+          <thead>
+            <tr><th>Ukuran</th><th>Target</th><th>Cara mengukur</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Slot hidup</td>
+              <td class="num">≥3 sepanjang waktu</td>
+              <td>Cuplikan <code>/health</code> tiap jam</td>
+            </tr>
+            <tr>
+              <td>Waktu pulih setelah sebuah exit diblokir</td>
+              <td class="num">&lt;1 jam</td>
+              <td>Selisih <code>blocked</code> → keluar dari daftar terbit, dari tabel <code>probes</code></td>
+            </tr>
+            <tr>
+              <td>Permintaan crawl yang kena blokir</td>
+              <td>Turun dari garis dasar</td>
+              <td>Kegagalan marker milik pipeline sendiri, bukan ukuran baru</td>
+            </tr>
+            <tr>
+              <td>Campur tangan manual</td>
+              <td class="num">0 / minggu</td>
+              <td>Tidak ada lagi menyunting <code>proxies.txt</code> dengan tangan</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Draf 1 · 19 Agustus 2026 · disusun dari pengujian pada repo <code>proxy-vpn</code> dan
+    namespace <code>crawler-dev</code> / <code>crawler-prod</code>. Belum ada kode yang ditulis
+    dan belum ada perubahan pada produksi.
+  </footer>
+
+</div>

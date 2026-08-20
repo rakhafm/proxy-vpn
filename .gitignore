@@ -1,0 +1,11 @@
+.env
+.pia-credentials
+proton-wr-profile/
+legacy-ovpn/vpn-profile/
+.venv-pool/
+probe-out/
+pool/probe-out/
+pool/pool.db
+__pycache__/
+*.pyc
+.DS_Store
