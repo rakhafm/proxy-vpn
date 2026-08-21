@@ -5,7 +5,7 @@ Lewat `servers.sh <provider> <grup>` apa adanya, bukan mem-parsing ulang cache
 yang beda antar provider) sudah didefinisikan sekali di sana; duplikasi di sini
 cuma bikin dua tempat bisa bedrift."""
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import config
 
@@ -24,13 +24,23 @@ def _all_servers(provider):
 
 
 def next_candidate(conn, provider, in_use):
-    """Server pertama yang belum pernah gagal dan sedang tidak dipakai slot lain."""
+    """Server pertama yang belum gagal BARU-BARU INI dan sedang tidak dipakai
+    slot lain. Kegagalan lama (lebih tua dari CANDIDATE_RETRY_HOURS) tidak
+    lagi mengecualikan - blokir OLX bergerak per-IP dalam hitungan jam
+    (README §Temuan), jadi exclude permanen bikin daftar kandidat SEA habis
+    dalam beberapa hari dan tiap rotasi berakhir 'dead'.
+
+    Filter tanggal dilakukan di Python, bukan `datetime('now', ...)` SQLite:
+    tried_at disimpan lewat isoformat() (pemisah 'T'), sedangkan datetime()
+    SQLite menghasilkan pemisah spasi - keduanya beda hasil kalau
+    dibandingkan sebagai string pada tanggal yang sama."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=config.CANDIDATE_RETRY_HOURS)).isoformat()
     failed = {
         row["server"]
         for row in conn.execute(
             "SELECT server FROM candidates WHERE provider=? AND result IN "
-            "('blocked','dup_ip','connect_fail','probe_error')",
-            (provider,),
+            "('blocked','dup_ip','connect_fail','probe_error') AND tried_at > ?",
+            (provider, cutoff),
         )
     }
     skip = failed | set(in_use)

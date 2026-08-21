@@ -2,10 +2,10 @@
 # hari (lihat PRD-proxy-pool.html#fase, Fase 3: "jalankan berdampingan
 # dengan vpn-pia/vpn-proton yang sudah ada dulu, jangan menggantinya").
 #
-# Ini cuma jembatan satu arah: ambil GET /proxies dari pool manager, tulis
-# ke file/proxies.txt di PVC yang sama yang sudah dibaca getconfig()
-# (config/scrape.py:208) - TIDAK ADA kode crawler yang berubah, TIDAK
-# menyentuh vpn-pia/vpn-proton yang sudah ada.
+# Ini cuma jembatan satu arah: ambil GET /proxies dari tiap pool manager di
+# POOL_URLS, gabungkan, tulis ke file/proxies.txt di PVC yang sama yang
+# sudah dibaca getconfig() (config/scrape.py:208) - TIDAK ADA kode crawler
+# yang berubah, TIDAK menyentuh vpn-pia/vpn-proton yang sudah ada.
 #
 # Verifikasi path PVC: worker asl-crawler-pricing-engine-v2-worker-
 # getdetailpage-prod me-mount crawler-prod-pvc-fs di /app/assets - jadi
@@ -38,14 +38,21 @@ spec:
               command: ["sh", "-c"]
               args:
                 - |
-                  set -e
-                  curl -fsS "$POOL_URL/proxies" -o /tmp/p
+                  set -eu
+                  : > /tmp/p
+                  for url in $POOL_URLS; do
+                    curl -fsS "$url/proxies" >> /tmp/p || true
+                  done
+                  # slot mati di satu pool tidak boleh menghapus slot hidup dari
+                  # pool lain - hanya batalkan sync kalau GABUNGAN keduanya kosong
+                  # (sama seperti kolam kosong tunggal: proxies.txt lama dibiarkan
+                  # utuh, lihat PRD §Keputusan).
                   [ -s /tmp/p ]
                   cp /tmp/p /mnt/crawler/file/proxies.txt
                   echo "tersinkron: $(wc -l < /tmp/p) baris"
               env:
-                - name: POOL_URL
-                  value: "http://10.0.0.51:8080"
+                - name: POOL_URLS
+                  value: "http://10.0.0.51:8080 http://10.0.0.52:8080"
               volumeMounts:
                 - name: crawler-fs
                   mountPath: /mnt/crawler

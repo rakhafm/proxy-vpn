@@ -52,6 +52,19 @@ class PoolTest(unittest.TestCase):
             got = candidates.next_candidate(conn, "pia", in_use={"Server-1", "Server-2"})
         self.assertIsNone(got)
 
+    def test_next_candidate_retries_after_window_expires(self):
+        from datetime import datetime, timedelta, timezone
+
+        old = (datetime.now(timezone.utc) - timedelta(hours=config.CANDIDATE_RETRY_HOURS + 1)).isoformat()
+        with db.connect() as conn:
+            conn.execute(
+                "INSERT INTO candidates (provider, server, slot_id, result, tried_at) VALUES (?,?,?,?,?)",
+                ("pia", "Server-1", "slot-1", "blocked", old),
+            )
+            conn.commit()
+            got = candidates.next_candidate(conn, "pia", in_use=set())
+        self.assertEqual(got, "Server-1")
+
     def test_proxies_503_when_pool_empty(self):
         r = app.test_client().get("/proxies")
         self.assertEqual(r.status_code, 503)
@@ -67,6 +80,32 @@ class PoolTest(unittest.TestCase):
         r = app.test_client().get("/proxies")
         self.assertEqual(r.status_code, 200)
         self.assertIn(f"http://{config.ADVERTISE_HOST}:9001", r.get_data(as_text=True))
+
+    def test_slot_bad_marks_blocked_and_logs_probe(self):
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE slots SET status='active', server='Server-1', exit_ip='1.2.3.4' "
+                "WHERE id='slot-1'"
+            )
+            conn.commit()
+        r = app.test_client().post("/slots/slot-1/bad")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["ok"])
+        with db.connect() as conn:
+            row = conn.execute("SELECT status FROM slots WHERE id='slot-1'").fetchone()
+            probe = conn.execute(
+                "SELECT verdict, kind FROM probes WHERE slot_id='slot-1' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            cand = conn.execute(
+                "SELECT result FROM candidates WHERE provider='pia' AND server='Server-1'"
+            ).fetchone()
+        self.assertEqual(row["status"], "blocked")
+        self.assertEqual((probe["kind"], probe["verdict"]), ("consumer", "blocked"))
+        self.assertEqual(cand["result"], "blocked")
+
+    def test_slot_bad_404_for_unknown_slot(self):
+        r = app.test_client().post("/slots/slot-does-not-exist/bad")
+        self.assertEqual(r.status_code, 404)
 
     def test_health_counts_slots(self):
         body = app.test_client().get("/health").get_json()
@@ -146,6 +185,44 @@ class PoolTest(unittest.TestCase):
     def test_dashboard_shows_failure_banner(self):
         r = app.test_client().get("/?done=verify&ok=0")
         self.assertIn("gagal", r.get_data(as_text=True))
+
+    def test_notify_posts_when_no_active_slots(self):
+        with mock.patch.object(config, "DISCORD_WEBHOOK_URL", "https://discord.example/webhook"), \
+             mock.patch("pool.jobs.requests.post") as post:
+            with db.connect() as conn:
+                jobs._notify_pool_state(conn)
+        post.assert_called_once()
+        self.assertEqual(post.call_args.args[0], "https://discord.example/webhook")
+        self.assertIn("kosong", post.call_args.kwargs["json"]["content"])
+
+    def test_notify_posts_on_partial_degradation(self):
+        # 1 dari 2 slot aktif - bukan kosong total, tapi tetap bukan "penuh".
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.commit()
+        with mock.patch.object(config, "DISCORD_WEBHOOK_URL", "https://discord.example/webhook"), \
+             mock.patch("pool.jobs.requests.post") as post:
+            with db.connect() as conn:
+                jobs._notify_pool_state(conn)
+        post.assert_called_once()
+        self.assertIn("1/2", post.call_args.kwargs["json"]["content"])
+
+    def test_notify_skips_when_pool_full(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active'")
+            conn.commit()
+        with mock.patch.object(config, "DISCORD_WEBHOOK_URL", "https://discord.example/webhook"), \
+             mock.patch("pool.jobs.requests.post") as post:
+            with db.connect() as conn:
+                jobs._notify_pool_state(conn)
+        post.assert_not_called()
+
+    def test_notify_skips_when_webhook_unset(self):
+        with mock.patch.object(config, "DISCORD_WEBHOOK_URL", None), \
+             mock.patch("pool.jobs.requests.post") as post:
+            with db.connect() as conn:
+                jobs._notify_pool_state(conn)
+        post.assert_not_called()
 
     def test_prune_probe_out_removes_old_keeps_recent(self):
         import os

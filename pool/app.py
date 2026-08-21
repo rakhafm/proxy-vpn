@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
-from . import config, db, jobs, scheduler
+from . import candidates, config, db, jobs, scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("pool.app")
@@ -91,6 +91,27 @@ def health():
         active = conn.execute("SELECT COUNT(*) n FROM slots WHERE status='active'").fetchone()["n"]
         total = conn.execute("SELECT COUNT(*) n FROM slots").fetchone()["n"]
     return jsonify({"status": "ok", "active_slots": active, "total_slots": total})
+
+
+@app.post("/slots/<slot_id>/bad")
+def slot_bad(slot_id):
+    """Umpan balik dari konsumen (crawler): tandai slot ini blocked SEKARANG,
+    tanpa menunggu verify_hourly berikutnya (sampai 59 menit). Konsumen yang
+    barusan kena deny tahu duluan daripada probe curl kita."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM slots WHERE id=?", (slot_id,)).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "slot tidak ada"}), 404
+        conn.execute("UPDATE slots SET status='blocked' WHERE id=?", (slot_id,))
+        conn.execute(
+            "INSERT INTO probes (slot_id, kind, verdict, detail, at) VALUES (?,?,?,?,?)",
+            (slot_id, "consumer", "blocked", "dilaporkan konsumen", datetime.now(timezone.utc).isoformat()),
+        )
+        if row["server"]:
+            candidates.record(conn, row["provider"], row["server"], slot_id, "blocked")
+        conn.commit()
+    log.info("slot %s: dilaporkan blocked oleh konsumen", slot_id)
+    return jsonify({"ok": True}), 200
 
 
 def _run_job(name, fn):

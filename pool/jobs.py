@@ -2,6 +2,8 @@ import logging
 import time
 from datetime import datetime, timezone
 
+import requests
+
 from . import candidates, config, orchestrator, probes
 
 log = logging.getLogger("pool.jobs")
@@ -38,6 +40,30 @@ def _log_probe(conn, slot_id, kind, verdict, detail):
         (slot_id, kind, verdict, detail, _now()),
     )
     conn.commit()
+
+
+def _notify_pool_state(conn):
+    """Kirim pesan Discord kalau kolam TIDAK penuh - baik degradasi sebagian
+    (sebagian slot mati) maupun total (0 aktif) - dipanggil di akhir kedua
+    job, supaya slot yang diam-diam mati tidak luput dari perhatian sampai
+    ada yang cek dashboard.
+    ponytail: tanpa dedupe - kalau kondisi belum pulih, tiap job kirim ulang
+    (rotate harian + verify tiap jam). Tambah state 'sudah dinotif' kalau
+    ini jadi berisik di praktiknya."""
+    if not config.DISCORD_WEBHOOK_URL:
+        return
+    total = conn.execute("SELECT COUNT(*) n FROM slots").fetchone()["n"]
+    active = conn.execute("SELECT COUNT(*) n FROM slots WHERE status='active'").fetchone()["n"]
+    if active == total:
+        return
+    if active == 0:
+        content = "⚠️ OLX proxy pool kosong - tidak ada slot aktif."
+    else:
+        content = f"⚠️ OLX proxy pool degradasi - {active}/{total} slot aktif."
+    try:
+        requests.post(config.DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
+    except requests.RequestException as e:
+        log.warning("gagal kirim notifikasi Discord: %s", e)
 
 
 def _active_ips(conn):
@@ -146,6 +172,7 @@ def rotate_daily(conn):
             log.warning("slot %s: PROTON_KEY_%s tidak diset, dilewati", slot["id"], slot["id"].upper())
             continue
         rotate_slot(conn, slot, pia_user, pia_pass)
+    _notify_pool_state(conn)
 
 
 def verify_hourly(conn):
@@ -167,3 +194,4 @@ def verify_hourly(conn):
         else:  # connecting
             conn.execute("UPDATE slots SET status='connecting' WHERE id=?", (slot["id"],))
             conn.commit()
+    _notify_pool_state(conn)

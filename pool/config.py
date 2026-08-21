@@ -31,6 +31,15 @@ OLX_URL = os.environ.get("OLX_URL", "https://www.olx.co.id/mobil-bekas_c198")
 # Dockerfile crawler; kode vonisnya disalin ke pool/probe/olx_probe.py.
 PROBE_IMAGE = os.environ.get("PROBE_IMAGE", "olx-pool-probe:latest")
 
+# Berapa jam server yang gagal/blocked dikeluarkan dari kandidat sebelum
+# dicoba lagi - lihat candidates.next_candidate().
+CANDIDATE_RETRY_HOURS = int(os.environ.get("POOL_CANDIDATE_RETRY_HOURS", "24"))
+
+# Webhook Discord (Server Settings -> Integrations -> Webhooks -> New Webhook,
+# salin URL-nya) buat notifikasi kolam tidak penuh (sebagian atau semua slot
+# mati). Kosong = notifikasi dimatikan.
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
 DAILY_TIME = os.environ.get("POOL_DAILY_TIME", "03:00")  # HH:MM, Asia/Jakarta
 HOURLY_REFILL = os.environ.get("HOURLY_REFILL", "0") == "1"
 MAX_CANDIDATE_TRIES = int(os.environ.get("POOL_MAX_TRIES", "5"))

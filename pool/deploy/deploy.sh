@@ -4,15 +4,15 @@
 # apa pun. Kamu yang menjalankan ini, sesuai kesepakatan.
 #
 # Paket sistem + kode saja. TIDAK menyentuh kredensial, TIDAK memasang
-# systemd unit, TIDAK membuka ufw, TIDAK menyentuh crawler-prod - itu
-# langkah manual terpisah, dicetak di akhir skrip ini.
+# systemd unit, TIDAK menyentuh crawler-prod - itu langkah manual
+# terpisah, dicetak di akhir skrip ini.
 #
 # Usage: ./pool/deploy/deploy.sh
 # Env (opsional): POOL_VM_HOST, POOL_VM_LOGIN, POOL_VM_REMOTE
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-HOST=${POOL_VM_HOST:-asl-prd-prod-crawler-proxy-1}
+HOST=${POOL_VM_HOST:-asl-prd-prod-crawler-proxy-2}
 LOGIN=${POOL_VM_LOGIN:-root}
 REMOTE=${POOL_VM_REMOTE:-/opt/proxy-pool}
 
@@ -52,10 +52,8 @@ Langkah yang TERSISA - sengaja manual, menyentuh kredensial dan systemd:
        tsh scp pool/deploy/pool-manager.service $LOGIN@$HOST:/etc/systemd/system/pool-manager.service
        tsh ssh $LOGIN@$HOST "systemctl daemon-reload && systemctl enable --now pool-manager"
 
-  4. Buka firewall - lihat pool/deploy/ufw.sh, jalankan DI VM.
-
-  5. Cek halaman pantau (SSH tunnel, atau langsung dari 10.0.0.0/24
-     setelah ufw dibuka): http://$HOST:8080/
+  4. Cek halaman pantau (SSH tunnel, atau langsung kalau network sudah
+     bisa route): http://$HOST:8080/
 
 CronJob crawler-prod (pool/deploy/crawler-prod-cronjob.yaml) SENGAJA belum
 disinggung di atas - itu langkah Fase 3 yang mengubah perilaku produksi,

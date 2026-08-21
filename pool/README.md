@@ -64,6 +64,7 @@ curl -X POST http://127.0.0.1:8080/jobs/verify
 curl http://127.0.0.1:8080/proxies
 curl http://127.0.0.1:8080/slots
 curl http://127.0.0.1:8080/probes?limit=20
+curl -X POST http://127.0.0.1:8080/slots/slot-1/bad   # konsumen lapor IP kena deny
 ```
 
 Tiap probe harian (`kind=daily` di `/probes`) menyimpan HTML + screenshot halaman
@@ -84,6 +85,8 @@ marker. `detail` di baris `/probes` menyebut nama filenya.
 | `POOL_DAILY_TIME` | `03:00` | jam rotasi, Asia/Jakarta |
 | `HOURLY_REFILL` | `0` | `1` = slot yang diblokir langsung dirotasi saat verifikasi per jam |
 | `POOL_MAX_TRIES` | `5` | percobaan kandidat maksimum per slot per rotasi |
+| `POOL_CANDIDATE_RETRY_HOURS` | `24` | jam sebelum server yang gagal/blocked boleh dicoba lagi |
+| `DISCORD_WEBHOOK_URL` | — | kalau diset, kirim pesan ke sini saat kolam tidak penuh (sebagian atau semua slot mati) di akhir tiap job |
 | `PROBE_IMAGE` | `olx-pool-probe:latest` | image probe harian sendiri, hasil `docker build pool/probe/` |
 | `PIA_CREDENTIALS` | cari `.pia-credentials` di root lalu `$HOME` | path kredensial PIA |
 | `PROTON_KEY_<SLOT>` | — | kunci WireGuard per slot Proton, wajib |

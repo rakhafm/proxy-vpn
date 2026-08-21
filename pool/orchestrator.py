@@ -45,7 +45,7 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_
         "docker", "run", "-d", "--name", name,
         "--cap-add=NET_ADMIN",
         "--device=/dev/net/tun:/dev/net/tun",
-        "-p", f"127.0.0.1:{port}:8888",
+        "-p", f"{port}:8888",
         *env,
         "qmcgaw/gluetun:latest",
     ]

@@ -65,18 +65,15 @@ tsh ssh root@asl-prd-prod-crawler-proxy-1 "systemctl daemon-reload && systemctl 
 tsh ssh root@asl-prd-prod-crawler-proxy-1 "systemctl status pool-manager --no-pager"
 ```
 
-**6. Buka firewall** (jalankan `pool/deploy/ufw.sh` di VM, lihat komentar di
-file itu untuk perintah `tsh scp`+`tsh ssh`-nya).
-
-**7. Verifikasi:**
+**6. Verifikasi:**
 
 ```bash
 tsh ssh root@asl-prd-prod-crawler-proxy-1 "curl -s http://127.0.0.1:8080/health"
 tsh ssh root@asl-prd-prod-crawler-proxy-1 "free -h"   # pantau RAM setelah rotasi pertama
 ```
 
-Halaman pantau (`http://10.0.0.51:8080/`) cuma bisa diakses dari
-`10.0.0.0/24`/`10.42.0.0/16` setelah langkah 6 — buka lewat SSH tunnel
+Halaman pantau (`http://10.0.0.51:8080/`) dan port proxy (9001-9006) publicly
+reachable — server ini tidak pakai firewall. Buka lewat SSH tunnel
 (`tsh ssh -L 8080:localhost:8080 root@asl-prd-prod-crawler-proxy-1`) atau
 dari mesin lain di jaringan itu.
 
