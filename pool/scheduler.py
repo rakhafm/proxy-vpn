@@ -1,12 +1,14 @@
-"""Dua job berulang lewat threading.Timer - tidak perlu Celery/APScheduler
-untuk dua job (lihat PRD §Teknologi)."""
+"""Tiga job berulang lewat thread biasa - tidak perlu Celery/APScheduler
+untuk segini (lihat PRD §Teknologi). Ketiganya berebut JOB_LOCK di jobs.py,
+jadi walaupun jadwalnya bertabrakan tidak ada dua job yang menyentuh Docker
+dan tabel slots bersamaan."""
 import logging
 import threading
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import db, jobs
+from . import config, db, jobs
 
 log = logging.getLogger("pool.scheduler")
 JAKARTA = ZoneInfo("Asia/Jakarta")
@@ -40,4 +42,13 @@ def _loop(name, first_delay, interval, fn):
 def start(daily_time):
     _loop("rotate-daily", _seconds_until(daily_time), 24 * 3600, jobs.rotate_daily)
     _loop("verify-hourly", 0, 3600, jobs.verify_hourly)
-    log.info("scheduler jalan: rotasi harian %s Asia/Jakarta, verifikasi tiap jam", daily_time)
+    # Selang pendek, tapi hanya menyentuh slot yang tidak aktif (query di
+    # recheck_stuck) - slot sehat tetap diperiksa sekali per jam seperti dulu,
+    # bukan 12x. Delay awal = satu selang penuh supaya tidak menabrak
+    # verify-hourly yang baru saja jalan di detik nol.
+    _loop("recheck-stuck", config.RECHECK_SECONDS, config.RECHECK_SECONDS, jobs.recheck_stuck)
+    log.info(
+        "scheduler jalan: rotasi harian %s Asia/Jakarta, verifikasi tiap jam, "
+        "cek ulang slot macet tiap %d detik",
+        daily_time, config.RECHECK_SECONDS,
+    )

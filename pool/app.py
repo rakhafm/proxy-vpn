@@ -1,7 +1,13 @@
 import logging
+import pathlib
+import re
 from datetime import datetime, timezone
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
+from flask import (
+    Flask, Response, abort, jsonify, redirect, render_template, request,
+    send_from_directory, url_for,
+)
+from markupsafe import Markup, escape
 
 from . import candidates, config, db, jobs, scheduler
 
@@ -9,6 +15,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("pool.app")
 
 app = Flask(__name__)
+
+PROBE_OUT_DIR = config.ROOT / "pool" / "probe-out"
+_PROBE_OUT_EXTS = {".html", ".png"}
 
 
 def _ago(iso_ts):
@@ -33,6 +42,27 @@ def _ago(iso_ts):
 
 
 app.jinja_env.filters["ago"] = _ago
+
+
+_BUKTI_RE = re.compile(r"pool/probe-out/([\w.-]+\.(?:html|png))")
+
+
+def _linkify_bukti(detail):
+    """Detail probe menulis 'bukti: pool/probe-out/xxx.html, ...' - path lokal
+    di VM, bukan URL. Ubah jadi tautan ke /probe-out/xxx supaya bukti bisa
+    dibuka langsung dari halaman pantau. escape() dulu baru linkify, supaya
+    detail probe (bisa berisi log gluetun mentah) tidak menyuntik HTML."""
+    if not detail:
+        return ""
+    escaped = str(escape(detail))
+    linked = _BUKTI_RE.sub(
+        lambda m: f'<a href="/probe-out/{m.group(1)}" target="_blank" rel="noopener">{m.group(0)}</a>',
+        escaped,
+    )
+    return Markup(linked)
+
+
+app.jinja_env.filters["linkify_bukti"] = _linkify_bukti
 
 
 def _slot_url(slot):
@@ -83,6 +113,18 @@ def probes_view():
             "SELECT * FROM probes ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+@app.get("/probe-out/<path:filename>")
+def probe_out(filename):
+    """Serve bukti probe (html + screenshot) yang dirujuk kolom detail di
+    halaman pantau - supaya link 'bukti: pool/probe-out/...' bisa dibuka
+    langsung di browser, bukan cuma path lokal di VM. send_from_directory
+    menolak path traversal sendiri; ekstensi dibatasi html/png karena itu
+    satu-satunya jenis file yang ditulis probes.run_daily()."""
+    if pathlib.Path(filename).suffix not in _PROBE_OUT_EXTS:
+        abort(404)
+    return send_from_directory(PROBE_OUT_DIR, filename)
 
 
 @app.get("/health")
@@ -142,12 +184,32 @@ def jobs_verify():
     return _run_job("verify", jobs.verify_hourly)
 
 
+@app.post("/slots/<slot_id>/rotate")
+def slot_rotate(slot_id):
+    # @serialized: rotasi satu slot lewat tombol pantau menyentuh Docker dan
+    # tabel slots sama seperti job terjadwal, jadi harus antre di lock yang
+    # sama - bukan berjalan berbarengan dengan verifikasi yang sedang jalan.
+    @jobs.serialized
+    def fn(conn):
+        slot = conn.execute("SELECT * FROM slots WHERE id=?", (slot_id,)).fetchone()
+        if slot is None:
+            raise ValueError(f"slot {slot_id} tidak ada")
+        pia_user, pia_pass = config.pia_credentials()
+        jobs.rotate_slot(conn, slot, pia_user, pia_pass)
+        jobs._notify_pool_state(conn)
+
+    return _run_job(f"rotate:{slot_id}", fn)
+
+
 @app.get("/")
 def index():
     with db.connect() as conn:
         slot_rows = conn.execute("SELECT * FROM slots ORDER BY id").fetchall()
         probe_rows = conn.execute("SELECT * FROM probes ORDER BY id DESC LIMIT 30").fetchall()
-    return render_template("index.html", slots=slot_rows, probes=probe_rows)
+    return render_template(
+        "index.html", slots=slot_rows, probes=probe_rows,
+        fail_streak_limit=config.FAIL_STREAK_LIMIT,
+    )
 
 
 def main():

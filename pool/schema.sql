@@ -9,7 +9,11 @@ CREATE TABLE IF NOT EXISTS slots (
   negara      TEXT,                   -- dari ipinfo.io, buat halaman pantau
   org         TEXT,                   -- ASN, mis. "AS212238 Datacamp Limited"
   status      TEXT NOT NULL DEFAULT 'dead',  -- active | blocked | connecting | dead
-  last_ok_at  TEXT
+  last_ok_at  TEXT,
+  -- Berapa probe per jam gagal berturut-turut; direset tiap vonis 'ok'. Slot
+  -- baru dicoret dari daftar terbit setelah menembus FAIL_STREAK_LIMIT, bukan
+  -- di kegagalan pertama - lihat jobs._apply_hourly_verdict().
+  fail_streak INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS probes (

@@ -15,17 +15,40 @@ SLOT_DEFS = [
     )
 ]
 
-# Grup yang dikenal servers.sh: sea (Asia Tenggara, default) | asia | nama
-# negara/region persis. OLX Indonesia belum terbukti menolak berdasar geografi
-# (lihat temuan exit Frankfurt di README), tapi kandidat dibatasi SEA supaya
-# tetap sejalan dengan hasil sweep yang sudah teruji (hasil-pia.csv/-proton.csv).
+# Satu atau lebih grup dikenal servers.sh, dipisah koma: sea (Asia Tenggara,
+# default) | asia | nama negara/region persis (mis. "China", "JP Tokyo" untuk
+# pia). OLX Indonesia belum terbukti menolak berdasar geografi (lihat temuan
+# exit Frankfurt di README), tapi kandidat dibatasi SEA(+) supaya tetap
+# sejalan dengan hasil sweep yang sudah teruji (hasil-pia.csv/-proton.csv).
 CANDIDATE_GROUP = os.environ.get("POOL_CANDIDATE_GROUP", "sea")
 
 DB_PATH = os.environ.get("POOL_DB", str(ROOT / "pool" / "pool.db"))
 API_PORT = int(os.environ.get("POOL_API_PORT", "8080"))
 ADVERTISE_HOST = os.environ.get("POOL_ADVERTISE_HOST", "127.0.0.1")
 
+# URL halaman hasil pencarian - dipakai probe HARIAN (browser sungguhan),
+# karena cuma di halaman inilah OLX_SEARCH_MARKERS bisa dihitung.
 OLX_URL = os.environ.get("OLX_URL", "https://www.olx.co.id/mobil-bekas_c198")
+
+# URL yang dipakai probe PER JAM. Sengaja root domain, BUKAN OLX_URL: sejak
+# 2026-09-02 Akamai me-reset stream HTTP/2 untuk `curl` di path pencarian
+# (exit 92) bahkan pada exit IP yang probe browser buktikan bersih beberapa
+# menit sebelumnya - 17/21 vonis 'connecting' di proxy-1 dan 20/29 di proxy-2
+# ternyata false negative jenis ini. Root domain lewat proxy yang sama membalas
+# normal (586 KB). Halaman deny Akamai bersifat per-IP, jadi kalau exit-nya
+# benar-benar ditolak, root domain pun ikut membawa referenceNum - vonis
+# 'blocked' tidak hilang ketajamannya. Memaksa --http1.1 BUKAN obatnya: dites,
+# malah timeout 5/5.
+OLX_HOURLY_URL = os.environ.get("OLX_HOURLY_URL", "https://www.olx.co.id/")
+
+# Endpoint netral untuk memastikan tunnel benar-benar hidup sebelum kegagalan
+# apa pun terhadap OLX ditafsirkan. Teks polos (satu baris IP), tidak lewat
+# CDN anti-bot, jadi kegagalan di sini benar-benar berarti tunnelnya mati.
+# ipinfo.io tetap dipakai orchestrator.exit_info() saat rotasi - di sana yang
+# dibutuhkan negara + ASN untuk halaman pantau, dan ifconfig.me tidak
+# menyediakan keduanya.
+IP_CHECK_URL = os.environ.get("IP_CHECK_URL", "https://ifconfig.me/ip")
+
 # Image sendiri (pool/probe/Dockerfile), bukan image crawler produksi - tidak
 # butuh login Harbor. Chrome-nya sejenis karena instalasinya disalin dari
 # Dockerfile crawler; kode vonisnya disalin ke pool/probe/olx_probe.py.
@@ -44,17 +67,56 @@ DAILY_TIME = os.environ.get("POOL_DAILY_TIME", "03:00")  # HH:MM, Asia/Jakarta
 HOURLY_REFILL = os.environ.get("HOURLY_REFILL", "0") == "1"
 MAX_CANDIDATE_TRIES = int(os.environ.get("POOL_MAX_TRIES", "5"))
 HEALTHY_TIMEOUT = int(os.environ.get("POOL_HEALTHY_TIMEOUT", "90"))
+
+# Berapa kali probe per jam harus gagal BERTURUT-TURUT sebelum slot dicoret
+# dari daftar terbit. 1 = perilaku lama (jatuh di kegagalan pertama). Hanya
+# berlaku untuk vonis 'connecting' - probe yang tidak dapat jawaban bukan
+# bukti; 'blocked' (referenceNum benar-benar terbaca) tetap menjatuhkan slot
+# seketika, karena itu bukti langsung tentang exit IP-nya.
+FAIL_STREAK_LIMIT = int(os.environ.get("POOL_FAIL_STREAK_LIMIT", "3"))
+
+# Selang cek ulang khusus slot yang TIDAK aktif, detik. Jauh lebih pendek dari
+# siklus per jam: slot 'connecting' tidak menerbitkan apa pun, jadi menunggu
+# sampai 59 menit untuk tahu ia sudah pulih itu kerugian tanpa imbalan.
+RECHECK_SECONDS = int(os.environ.get("POOL_RECHECK_SECONDS", "300"))
+
+# Rotasi otomatis slot yang macet 'connecting' setelah menembus
+# FAIL_STREAK_LIMIT. Default menyala - slot 'connecting' sudah tidak
+# diterbitkan, jadi merotasinya tidak bisa memperburuk keadaan, dan tanpa ini
+# satu-satunya jalan keluar adalah rotasi manual. Beda dari HOURLY_REFILL,
+# yang mengatur rotasi slot 'blocked' (masih default mati - di sana rotasi
+# membuang exit yang mungkin pulih sendiri saat reputasinya bergeser).
+ROTATE_STUCK = os.environ.get("POOL_ROTATE_STUCK", "1") == "1"
 # Bukti HTML+screenshot (pool/probe-out/) numpuk ~1.6 MB per percobaan probe
 # harian - tanpa batas ini tumbuh tak terbatas. Dipangkas tiap rotasi harian,
 # bukan tugas terpisah - satu-satunya jadwal yang sudah pasti jalan tiap hari.
 PROBE_OUT_RETAIN_DAYS = int(os.environ.get("PROBE_OUT_RETAIN_DAYS", "14"))
 
+# Eksperimen: banyak rotasi (PIA & Proton, OpenVPN & WireGuard) berakhir
+# ERR_HTTP2_PROTOCOL_ERROR dari Chrome saat probe (ditemukan dari bukti
+# probe-out 2026-08-24, tersebar acak lintas puluhan server & dua provider -
+# pola fragmentasi tunnel, bukan blokir OLX per-IP). Wiki gluetun menyebut
+# WIREGUARD_MTU/OPENVPN_MSSFIX sebagai obat untuk gejala koneksi semacam ini.
+# Kosongkan (string kosong) untuk pakai default gluetun apa adanya.
+WIREGUARD_MTU = os.environ.get("WIREGUARD_MTU", "1280")
+OPENVPN_MSSFIX = os.environ.get("OPENVPN_MSSFIX", "1280")
 
-def pia_credentials():
-    """(user, pass) dari .pia-credentials, sama seperti run-clean.sh."""
-    cred = os.environ.get("PIA_CREDENTIALS")
+# Proton bisa jalan lewat WireGuard (default, kunci per-slot - lihat
+# proton_key()) atau OpenVPN (kredensial akun dibagi semua slot Proton, lihat
+# proton_credentials()). Default tetap wireguard supaya slot yang sudah jalan
+# tidak berubah perilaku diam-diam kalau env ini tidak diset.
+PROTON_VPN_TYPE = os.environ.get("PROTON_VPN_TYPE", "wireguard")
+
+
+def _credentials_from_file(env_var, filename):
+    """(user, pass) dari file dua baris (user lalu pass) - path dicari lewat
+    env_var dulu, lalu <filename> di root repo, lalu $HOME. Dipakai
+    pia_credentials() dan proton_credentials(): dua provider, format
+    kredensial yang identik, jadi satu implementasi bukan dua yang bisa
+    bedrift."""
+    cred = os.environ.get(env_var)
     if not cred:
-        for c in (ROOT / ".pia-credentials", pathlib.Path.home() / ".pia-credentials"):
+        for c in (ROOT / filename, pathlib.Path.home() / filename):
             if c.is_file():
                 cred = str(c)
                 break
@@ -62,6 +124,20 @@ def pia_credentials():
         return None, None
     lines = pathlib.Path(cred).read_text().splitlines()
     return (lines[0].strip(), lines[1].strip()) if len(lines) >= 2 else (None, None)
+
+
+def pia_credentials():
+    """(user, pass) dari .pia-credentials, sama seperti run-clean.sh."""
+    return _credentials_from_file("PIA_CREDENTIALS", ".pia-credentials")
+
+
+def proton_credentials():
+    """(user, pass) OpenVPN Proton dari .proton-credentials - kredensial
+    "OpenVPN/IKEv2" khusus di akun Proton (account.proton.me/u/2/account-
+    password), BUKAN login akun biasa. Dipakai kalau PROTON_VPN_TYPE=openvpn;
+    satu akun dipakai semua slot Proton openvpn sekaligus - beda dari kunci
+    WireGuard yang wajib per-slot (proton_key(), identitas per-perangkat)."""
+    return _credentials_from_file("PROTON_CREDENTIALS", ".proton-credentials")
 
 
 def proton_key(slot_id):

@@ -16,8 +16,12 @@ satunya alasan probe ini menjalankan Chrome sama sekali, bukan sekadar
 sini secara manual; tidak ada mekanisme otomatis yang menjaga keduanya sama.
 
 Exit 0 = lolos (>=1 marker pipeline ditemukan)
-Exit 1 = diblokir / marker nol - halaman tidak dirender seperti hasil pencarian
-Exit 2 = error lain (proxy kosong, tunnel tidak menjawab, dst)
+Exit 1 = diblokir / marker nol - halaman OLX dimuat tapi tidak seperti hasil
+         pencarian (bukan error jaringan - lihat exit 2)
+Exit 2 = error lain: proxy kosong, tunnel tidak menjawab, Chrome gagal start,
+         atau halaman error jaringan bawaan Chrome (neterror, mis.
+         ERR_HTTP2_PROTOCOL_ERROR) - exit ini TIDAK menilai apa pun tentang
+         exit IP, jangan dicatat sebagai "blocked" di candidates table
 """
 import os
 import sys
@@ -112,6 +116,24 @@ def main():
         except Exception as e:
             print(f"gagal memuat {URL}: {e}", file=sys.stderr)
             _save_evidence(driver)  # best-effort - mungkin cuma about:blank
+            return 2
+
+        # Selenium TIDAK melempar exception untuk error jaringan bawaan Chrome
+        # (mis. ERR_HTTP2_PROTOCOL_ERROR, ERR_CONNECTION_RESET) - halaman
+        # interstitial-nya dirender sebagai DOM biasa, jadi try/except di atas
+        # tidak pernah kena. current_url TIDAK bisa dipakai mendeteksinya:
+        # sejak "committed interstitials" (Chrome ~71+) halaman error dicommit
+        # di URL yang diminta, bukan chrome-error:// (dicoba & terbukti gagal
+        # di produksi - lihat riwayat probe 2026-08-24). Penanda yang terbukti
+        # stabil dari bukti nyata (pool/probe-out/slot-1-20260824T101039Z.html,
+        # ERR_HTTP2_PROTOCOL_ERROR): template neterror.html Chromium selalu
+        # punya id="main-frame-error". Tanpa cek ini, error transport ikut
+        # dihitung 0 marker -> divoniskan "blocked" (exit 1) dan meracuni
+        # candidates table 24 jam padahal exit IP-nya tidak pernah benar-benar
+        # dites ke OLX.
+        if 'id="main-frame-error"' in driver.page_source:
+            print(f"halaman error jaringan Chrome saat memuat {URL}", file=sys.stderr)
+            _save_evidence(driver)
             return 2
 
         try:

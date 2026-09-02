@@ -1,0 +1,131 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Apa isi repo ini
+
+Cari exit IP VPN (PIA lewat OpenVPN, Proton lewat WireGuard/OpenVPN) yang hari ini masih bisa
+membuka OLX tanpa kena blokir bot Akamai, lalu terbitkan proxy yang lolos. Dua generasi hidup
+berdampingan:
+
+- **Jalur manual (root repo)** — script bash sekali jalan: `servers.sh` → `sweep.sh` → `run-clean.sh`,
+  hasilnya `hasil-<provider>.csv` + bukti di `probe-out/`.
+- **`pool/`** — pool manager (Flask + SQLite) yang mengotomatiskan alur itu sebagai layanan.
+  Ini yang aktif dikembangkan.
+- **`legacy-ovpn/`** — jalur `.ovpn` tulis-sendiri, tidak lagi dikembangkan tapi masih dipakai
+  `vpn-pia` di prod.
+
+Rancangan pool manager ada di `docs/PRD-proxy-pool.html` — kode `pool/` sering menyitasi bagiannya
+(`§Model slot`, `§Teknologi`, `§Keputusan`). Baca itu sebelum mengubah keputusan desain.
+
+**Bahasa: dokumentasi, komentar, log, dan pesan error semuanya bahasa Indonesia.** Nama
+kolom DB dan variabel campuran (`negara`, `org`, `diblokir`, `alasan`). Ikuti pola yang ada.
+
+## Perintah
+
+Jalur manual (butuh Docker, Chrome, `npx playwright`):
+
+```bash
+./servers.sh pia sea                          # daftar server (cache: servers-<prov>.txt; -r segarkan)
+./servers.sh pia sea | xargs ./sweep.sh pia   # sapu → hasil-pia.csv (~25 menit)
+./run-clean.sh pia --pool 3                   # jalankan server yang lolos di sweep terakhir
+./shot.sh <url> out.png                       # screenshot satu halaman lewat proxy
+```
+
+Pool manager:
+
+```bash
+python3 -m venv .venv-pool && .venv-pool/bin/pip install -r pool/requirements.txt
+docker build -t olx-pool-probe:latest pool/probe/          # sekali, sebelum rotasi pertama
+PIA_SLOTS=3 PROTON_SLOTS=3 PROTON_KEY_SLOT_4=... \
+  .venv-pool/bin/python3 -m pool.app                       # scheduler + API di :8080
+
+.venv-pool/bin/python3 -m pool.test_pool -v                # self-check, tanpa Docker/jaringan
+.venv-pool/bin/python3 -m pool.test_pool -v PoolTest.test_next_candidate_skips_failed   # satu test
+```
+
+Tidak ada linter/formatter yang dikonfigurasi di repo ini.
+
+Memicu job manual tanpa menunggu jadwal:
+
+```bash
+curl -X POST http://127.0.0.1:8080/jobs/rotate
+curl -X POST http://127.0.0.1:8080/jobs/verify
+curl -X POST http://127.0.0.1:8080/slots/slot-1/bad   # konsumen lapor IP kena deny
+```
+
+## Arsitektur `pool/`
+
+Alur satu rotasi (`jobs.rotate_slot`) — tiap langkah bisa menggagalkan kandidat dan mencoba
+yang berikutnya, sampai `POOL_MAX_TRIES`:
+
+```
+candidates.next_candidate()  → server acak, belum gagal <24 jam, tidak dipakai slot lain
+orchestrator.start()         → docker run gluetun, HTTP proxy di port PORT_BASE+n
+orchestrator.wait_healthy()  → gagal ⇒ ambil docker logs DULU (sebelum stop), catat connect_fail
+orchestrator.exit_info()     → ipinfo.io lewat proxy; exit IP duplikat ⇒ dup_ip
+probes.run_daily()           → Chrome di container probe ⇒ ok | blocked | error
+                               ⇒ slot active + tulis exit_ip/negara/org
+```
+
+`verify_hourly` menjalankan `probes.run_hourly` (curl saja) pada slot active/connecting;
+`recheck_stuck` melakukan hal yang sama tiap 5 menit khusus slot non-aktif. Keduanya lewat
+`jobs._apply_hourly_verdict()`, yang memegang seluruh aturan status — baca itu sebelum
+mengubah perilaku probe.
+
+Berkas per tanggung jawab:
+
+| Berkas | Isi |
+|---|---|
+| `config.py` | semua env var + pembaca kredensial; satu-satunya tempat default hidup |
+| `db.py` | koneksi SQLite + `_migrate()` untuk kolom yang ditambah belakangan |
+| `candidates.py` | pilih server; memanggil `../servers.sh` sebagai subprocess, tidak parse cache sendiri |
+| `orchestrator.py` | `docker` CLI lewat subprocess (bukan docker-py) |
+| `probes.py` | dua jalur uji: `curl` per jam, Chrome-in-Docker harian |
+| `jobs.py` | rotasi harian & verifikasi per jam, notifikasi Discord |
+| `scheduler.py` | dua `threading.Timer` loop, sengaja bukan Celery/APScheduler |
+| `app.py` | Flask: `/proxies`, `/proxies.json`, `/slots`, `/probes`, `/health`, `/probe-out/<f>`, halaman pantau `/` |
+| `probe/olx_probe.py` | jalan **di dalam** container probe, bukan di proses pool |
+
+## Invarian yang gampang dilanggar
+
+- **Empat vonis probe per jam, dan tiga di antaranya gampang tertukar.** `connecting` = tunnel
+  mati (langkah `IP_CHECK_URL` gagal). `inconclusive` = tunnel sehat tapi OLX tidak menjawab —
+  **tidak menyentuh status slot**. `blocked` = `referenceNum` terbaca, bukti langsung tentang
+  exit IP. `ok` = normal. Menggabungkan `inconclusive` ke `connecting` adalah bug yang persis
+  sudah pernah terjadi: 17/21 vonis `connecting` di proxy-1 mencoret slot yang sehat.
+- **`blocked` ≠ `error`.** `blocked` = Akamai menolak (halaman dimuat, nol marker) — sinyal tentang
+  exit IP-nya. `error`/exit 2 dari `olx_probe.py` = probe gagal sebelum menilai (Chrome crash,
+  tunnel putus) — dicatat `probe_error`, jangan pernah dicampur jadi "diblokir".
+- **Halaman deny OLX tetap HTTP 200.** Klasifikasi berbasis pola HTML (`id="referenceNum"`,
+  jumlah `OLX_SEARCH_MARKERS`), bukan status code. `curl` cukup untuk memvonis *buruk*; vonis
+  *bersih* butuh browser sungguhan.
+- **`run_hourly` memakai binary `curl`, bukan `requests`.** Fingerprint TLS/HTTP2 `requests`
+  disuguhi silent-timeout oleh Akamai. Jangan "rapikan" jadi library HTTP.
+- **Probe per jam menembak root domain, probe harian menembak halaman pencarian.** Jangan
+  satukan: `curl` ke path pencarian di-reset Akamai (exit 92) walau exit IP-nya bersih.
+  Klasifikasinya lewat dua URL, bukan lewat daftar exit code curl — daftar kode langsung basi
+  kalau Akamai ganti cara menolak.
+- **Semua job antre di `jobs.JOB_LOCK` lewat `@jobs.serialized`.** Rotasi dan verifikasi
+  sama-sama menyentuh Docker + tabel `slots` dari thread berbeda (scheduler vs request Flask).
+  Job baru yang menyentuh keduanya wajib ikut didekorasi.
+- **`orchestrator.logs()` harus dipanggil sebelum `stop()`** — container yang sudah dihapus tidak
+  punya log lagi.
+- **Kunci WireGuard Proton wajib satu per slot** (`PROTON_KEY_SLOT_N`); tidak ada fallback ke
+  `PROTON_KEY` bersama. Kredensial OpenVPN Proton sebaliknya satu akun untuk semua slot.
+- **`next_candidate()` mengacak daftar** — tanpa itu klaster negara pertama secara abjad menghabiskan
+  seluruh jatah percobaan tiap rotasi.
+- **`pool/probe/olx_probe.py` adalah salinan manual** dari `config/scrape.py` dan `utility/utility.py`
+  di repo crawler produksi (`asl-crawler-pricing-engine-v2`), begitu juga instalasi Chrome di
+  `pool/probe/Dockerfile`. Tidak ada sinkronisasi otomatis — sitasi baris asal ada di header file.
+- **Image probe dikunci `--platform=linux/amd64` di `docker build`, dan sengaja TIDAK diset di
+  `docker run`** (Docker Desktop malah gagal mengenali image lokal kalau diset).
+- **`/proxies` balas 503 saat kolam kosong**, bukan 200 kosong, supaya `curl -f` konsumen gagal dan
+  `proxies.txt` lama tidak tertimpa.
+
+## Deploy (Fase 3)
+
+`pool/deploy/` berisi artefak untuk VM `asl-prd-prod-crawler-proxy-1` (akses `tsh ssh`).
+Semuanya **dijalankan manual oleh user** — `deploy.sh` menyalin kode, kredensial disalin sendiri,
+`crawler-prod-cronjob.yaml` sengaja belum pernah diterapkan (keputusan PRD: jalan berdampingan
+dengan `vpn-pia`/`vpn-proton` dulu). VM cuma 1.9 GB RAM tanpa swap → dikonfigurasi 3 slot, bukan 6.

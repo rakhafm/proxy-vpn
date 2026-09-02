@@ -8,12 +8,15 @@ import time
 
 import requests
 
+from . import config
+
 
 def container_name(slot_id):
     return f"gluetun-{slot_id}"
 
 
-def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_key=None):
+def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
+          proton_key=None, proton_user=None, proton_pass=None):
     name = container_name(slot_id)
     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -31,13 +34,33 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_
             "-e", f"OPENVPN_PASSWORD={pia_pass or ''}",
             "-e", f"SERVER_NAMES={server}",
         ]
+        if config.OPENVPN_MSSFIX:
+            env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
     elif provider == "proton":
-        env += [
-            "-e", "VPN_SERVICE_PROVIDER=protonvpn",
-            "-e", "VPN_TYPE=wireguard",
-            "-e", f"WIREGUARD_PRIVATE_KEY={proton_key or ''}",
-            "-e", f"SERVER_HOSTNAMES={server}",
-        ]
+        # SERVER_HOSTNAMES sama persis untuk openvpn maupun wireguard - gluetun
+        # (format-servers) mendaftar tiap hostname Proton dua kali, satu baris
+        # per VPN_TYPE, jadi cache servers-proton.txt (yang cuma menyimpan
+        # kolom hostname, sudah tersaring lewat servers.sh) valid dipakai apa
+        # adanya untuk kedua mode - tidak perlu cache/kandidat terpisah.
+        if config.PROTON_VPN_TYPE == "openvpn":
+            env += [
+                "-e", "VPN_SERVICE_PROVIDER=protonvpn",
+                "-e", "VPN_TYPE=openvpn",
+                "-e", f"OPENVPN_USER={proton_user or ''}",
+                "-e", f"OPENVPN_PASSWORD={proton_pass or ''}",
+                "-e", f"SERVER_HOSTNAMES={server}",
+            ]
+            if config.OPENVPN_MSSFIX:
+                env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+        else:
+            env += [
+                "-e", "VPN_SERVICE_PROVIDER=protonvpn",
+                "-e", "VPN_TYPE=wireguard",
+                "-e", f"WIREGUARD_PRIVATE_KEY={proton_key or ''}",
+                "-e", f"SERVER_HOSTNAMES={server}",
+            ]
+            if config.WIREGUARD_MTU:
+                env += ["-e", f"WIREGUARD_MTU={config.WIREGUARD_MTU}"]
     else:
         raise ValueError(f"provider tidak dikenal: {provider}")
 

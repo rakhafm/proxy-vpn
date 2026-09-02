@@ -11,30 +11,58 @@ OUT_DIR = config.ROOT / "pool" / "probe-out"
 _BLOCK_MARKER = 'id="referenceNum"'
 
 
-def run_hourly(port, timeout=15):
-    """Murah, lewat binary `curl` - BUKAN lewat library `requests`. Keduanya
-    kelihatan sama ("HTTP client generik tanpa browser") tapi fingerprint
-    TLS/HTTP2-nya beda di mata Akamai: `requests` disuguhi silent-timeout
-    (dites langsung, 15s macet total tanpa balasan di SEMUA 6 slot yang
-    baru saja terbukti bersih lewat probe browser), sedangkan `curl` biasa
-    dapat balasan dalam ~1.5 detik. Sama prinsipnya dengan probe harian yang
-    pakai Chrome asli, bukan reimplementasi - pakai alat yang fingerprint-nya
-    sudah terbukti, jangan mendekati lewat library lain.
-    Return (verdict, detail) - verdict 'ok' (termasuk interstitial bm-verify,
-    itu jawaban normal untuk curl), 'blocked', 'connecting' (proxy/tunnel
-    tidak menjawab sama sekali)."""
+def _curl(port, url, timeout):
+    """(returncode, body, error) lewat binary `curl` - BUKAN lewat library
+    `requests`. Keduanya kelihatan sama ("HTTP client generik tanpa browser")
+    tapi fingerprint TLS/HTTP2-nya beda di mata Akamai: `requests` disuguhi
+    silent-timeout (dites langsung, 15s macet total tanpa balasan di SEMUA 6
+    slot yang baru saja terbukti bersih lewat probe browser). Sama prinsipnya
+    dengan probe harian yang pakai Chrome asli, bukan reimplementasi - pakai
+    alat yang fingerprint-nya sudah terbukti, jangan mendekati lewat library
+    lain. returncode -1 = curl sendiri tidak selesai dalam waktunya."""
     proxy = f"http://127.0.0.1:{port}"
-    cmd = ["curl", "-sS", "--max-time", str(timeout), "-x", proxy, config.OLX_URL]
+    cmd = ["curl", "-sS", "--max-time", str(timeout), "-x", proxy, url]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
     except subprocess.TimeoutExpired:
-        return "connecting", f"curl timeout {timeout}s"
-    if r.returncode != 0:
-        return "connecting", f"curl exit {r.returncode}: {r.stderr.strip()[-300:]}"
-    body = r.stdout
+        return -1, "", f"curl timeout {timeout}s"
+    return r.returncode, r.stdout, r.stderr.strip()[-300:]
+
+
+def run_hourly(port, timeout=15):
+    """Murah, dua langkah - memisahkan "tunnelnya mati" dari "vonisnya tidak
+    diperoleh". Sebelumnya keduanya digabung: SETIAP curl exit != 0 dianggap
+    'connecting', sehingga reset HTTP/2 dari Akamai (exit 92, fingerprint TLS
+    curl ditolak) mencoret slot yang exit IP-nya sehat - 17/21 vonis
+    'connecting' di proxy-1 dan 20/29 di proxy-2 adalah kasus ini.
+
+    Langkah (a) menembak endpoint netral (config.IP_CHECK_URL, teks polos di
+    luar CDN anti-bot): gagal di sini = tunnelnya memang tidak menjawab.
+    Langkah (b) baru menembak OLX. Kegagalan di (b) SETELAH (a) lolos tidak
+    bisa disimpulkan apa-apa tentang exit IP-nya, jadi divonis 'inconclusive'
+    dan sengaja tidak mengubah status slot - bukan 'connecting'.
+
+    Klasifikasi lewat dua URL, bukan lewat daftar exit code curl yang
+    "berarti tunnel mati": kalau Akamai berganti cara menolak lagi, daftar
+    kode itu langsung basi, sedangkan pertanyaan "apakah tunnelnya hidup"
+    tetap terjawab benar.
+
+    Return (verdict, detail) - 'ok' (termasuk interstitial bm-verify, itu
+    jawaban normal untuk curl), 'blocked', 'connecting', 'inconclusive'."""
+    rc, body, err = _curl(port, config.IP_CHECK_URL, timeout)
+    if rc != 0:
+        return "connecting", f"tunnel mati - {config.IP_CHECK_URL} curl exit {rc}: {err}"
+    exit_ip = body.strip().splitlines()[0][:45] if body.strip() else "?"
+
+    rc, body, err = _curl(port, config.OLX_HOURLY_URL, timeout)
+    if rc != 0:
+        return "inconclusive", (
+            f"tunnel sehat (exit {exit_ip}) tapi {config.OLX_HOURLY_URL} "
+            f"curl exit {rc}: {err}"
+        )
     if _BLOCK_MARKER in body:
-        return "blocked", f"referenceNum, {len(body)} byte"
-    return "ok", f"{len(body)} byte"
+        return "blocked", f"referenceNum, {len(body)} byte, exit {exit_ip}"
+    return "ok", f"{len(body)} byte, exit {exit_ip}"
 
 
 def run_daily(port, slot_id, timeout=90):
