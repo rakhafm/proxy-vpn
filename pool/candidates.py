@@ -12,6 +12,12 @@ from . import config
 
 
 def _all_servers(provider):
+    if provider == "pia-custom":
+        # Region tetap (config.PIA_CUSTOM_REGIONS), bukan lewat servers.sh -
+        # provider ini tidak dikenal skrip itu (cuma pia|proton). "server" di
+        # sini adalah kode region punya get-pia-ovpn.sh (lihat pia_custom.py),
+        # bukan hostname/IP.
+        return list(config.PIA_CUSTOM_REGIONS)
     script = config.ROOT / "servers.sh"
     # CANDIDATE_GROUP boleh berisi beberapa grup dipisah koma (mis. "sea,China,JP
     # Tokyo,Hong Kong,Taiwan,South Korea") - servers.sh menerima banyak filter

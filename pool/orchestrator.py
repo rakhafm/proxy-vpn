@@ -8,7 +8,7 @@ import time
 
 import requests
 
-from . import config
+from . import config, pia_custom
 
 
 def container_name(slot_id):
@@ -26,6 +26,7 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
         "-e", "FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12",
         "-e", "TZ=Asia/Jakarta",
     ]
+    volumes = []
     if provider == "pia":
         env += [
             "-e", "VPN_SERVICE_PROVIDER=private internet access",
@@ -36,6 +37,27 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
         ]
         if config.OPENVPN_MSSFIX:
             env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+    elif provider == "pia-custom":
+        # `server` di sini kode region (lihat candidates._all_servers), bukan
+        # hostname - mode gluetun 'custom' (sama seperti legacy-ovpn/
+        # docker-compose.yml), profil-nya di-download/di-cache oleh
+        # pia_custom.ensure_profile(), bukan server bawaan image gluetun.
+        profile = pia_custom.ensure_profile(server, pia_user, pia_pass)
+        if profile is None:
+            raise RuntimeError(
+                f"profil PIA custom untuk region {server} tidak tersedia "
+                "(download gagal dan tidak ada cache lama)"
+            )
+        env += [
+            "-e", "VPN_SERVICE_PROVIDER=custom",
+            "-e", "VPN_TYPE=openvpn",
+            "-e", "OPENVPN_CUSTOM_CONFIG=/gluetun/custom.conf",
+            "-e", f"OPENVPN_USER={pia_user or ''}",
+            "-e", f"OPENVPN_PASSWORD={pia_pass or ''}",
+        ]
+        if config.OPENVPN_MSSFIX:
+            env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+        volumes += ["-v", f"{profile}:/gluetun/custom.conf:ro"]
     elif provider == "proton":
         # SERVER_HOSTNAMES sama persis untuk openvpn maupun wireguard - gluetun
         # (format-servers) mendaftar tiap hostname Proton dua kali, satu baris
@@ -69,6 +91,7 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
         "--cap-add=NET_ADMIN",
         "--device=/dev/net/tun:/dev/net/tun",
         "-p", f"{port}:8888",
+        *volumes,
         *env,
         "qmcgaw/gluetun:latest",
     ]

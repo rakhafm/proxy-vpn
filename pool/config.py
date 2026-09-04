@@ -6,14 +6,49 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PORT_BASE = int(os.environ.get("POOL_PORT_BASE", "9000"))
 PIA_SLOTS = int(os.environ.get("PIA_SLOTS", "3"))
 PROTON_SLOTS = int(os.environ.get("PROTON_SLOTS", "3"))
+# Opsional, default 0 (mati) - provider terpisah, bukan pengganti PIA_SLOTS.
+# Pakai profil .ovpn hasil download dari config generator PIA (lihat
+# pool/pia_custom.py + legacy-ovpn/get-pia-ovpn.sh), bukan server bawaan
+# gluetun. Eksperimen 2026-09-03: satu profil begini terbukti lolos sampai
+# ke halaman listing (markers penuh) di saat server bawaan gluetun untuk
+# region yang sama kena redirect homepage - belum tentu sistematis, jadi
+# dijalankan berdampingan supaya bisa dibandingkan, bukan menggantikan.
+PIA_CUSTOM_SLOTS = int(os.environ.get("PIA_CUSTOM_SLOTS", "0"))
 
 # [(slot_id, provider, port), ...] - urutan tetap, port = PORT_BASE + n.
 SLOT_DEFS = [
     (f"slot-{n}", provider, PORT_BASE + n)
     for n, provider in enumerate(
-        ["pia"] * PIA_SLOTS + ["proton"] * PROTON_SLOTS, start=1
+        ["pia"] * PIA_SLOTS + ["proton"] * PROTON_SLOTS + ["pia-custom"] * PIA_CUSTOM_SLOTS,
+        start=1,
     )
 ]
+
+# Region TETAP untuk provider pia-custom - bukan "all", supaya rotasi harian
+# (sampai POOL_MAX_TRIES percobaan per slot) tidak login+generate ke akun PIA
+# terlalu sering (risiko rate-limit/flag akun). Kode ini milik
+# get-pia-ovpn.sh sendiri (lihat "./legacy-ovpn/get-pia-ovpn.sh -l"), padanan
+# kasar dari grup "sea" PIA di servers.sh (Singapore|Indonesia|Malaysia|
+# Philippines|Vietnam).
+PIA_CUSTOM_REGIONS = [
+    r.strip() for r in
+    os.environ.get("PIA_CUSTOM_REGIONS", "sg,jakarta,kualalumpur,philippines,vietnam").split(",")
+    if r.strip()
+]
+
+# Direktori profil .ovpn hasil download - MILIK pool sendiri, sengaja terpisah
+# dari legacy-ovpn/vpn-profile/ supaya kebijakan refresh di sini (lihat
+# PIA_CUSTOM_PROFILE_MAX_AGE_HOURS) tidak tercampur dengan file yang disimpan
+# manual (bersuffix tanggal, retensi KEEP_DAYS punya daily.sh) di sana.
+PIA_CUSTOM_PROFILE_DIR = os.environ.get(
+    "PIA_CUSTOM_PROFILE_DIR", str(ROOT / "pool" / "vpn-profile")
+)
+
+# Profil dipakai ulang sampai selama ini sebelum didownload ulang - SINKRON
+# dengan siklus rotasi harian, bukan sekali per percobaan kandidat (bisa
+# sampai POOL_MAX_TRIES x tiap slot pia-custom per rotasi) - itu berarti
+# login ke akun PIA berkali-kali dalam hitungan menit tiap hari.
+PIA_CUSTOM_PROFILE_MAX_AGE_HOURS = int(os.environ.get("PIA_CUSTOM_PROFILE_MAX_AGE_HOURS", "24"))
 
 # Satu atau lebih grup dikenal servers.sh, dipisah koma: sea (Asia Tenggara,
 # default) | asia | nama negara/region persis (mis. "China", "JP Tokyo" untuk

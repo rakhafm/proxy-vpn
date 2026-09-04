@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS slots (
   id          TEXT PRIMARY KEY,
   port        INTEGER NOT NULL,
-  provider    TEXT NOT NULL,          -- pia | proton
+  provider    TEXT NOT NULL,          -- pia | proton | pia-custom
   server      TEXT,                   -- pemilih server yang sedang terpasang
   exit_ip     TEXT,                   -- kunci dedupe antar slot
   negara      TEXT,                   -- dari ipinfo.io, buat halaman pantau

@@ -202,7 +202,7 @@ def rotate_daily(conn):
     pia_user, pia_pass = config.pia_credentials()
     slots = conn.execute("SELECT * FROM slots ORDER BY id").fetchall()
     for slot in slots:
-        if slot["provider"] == "pia" and not pia_user:
+        if slot["provider"] in ("pia", "pia-custom") and not pia_user:
             log.warning("slot %s: .pia-credentials tidak ada, dilewati", slot["id"])
             continue
         if slot["provider"] == "proton":

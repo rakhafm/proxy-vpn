@@ -1,6 +1,7 @@
 """Self-check tanpa Docker/jaringan: skema, dedupe kandidat, dan endpoint API
 di atas SQLite sementara. Jalankan: python3 -m pool.test_pool
 (dari root repo, dengan venv yang sudah pip install -r pool/requirements.txt)."""
+import os
 import tempfile
 import threading
 import time
@@ -8,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from . import candidates, config, db, jobs, orchestrator
+from . import candidates, config, db, jobs, orchestrator, pia_custom
 from .app import _ago, app
 
 
@@ -84,6 +85,19 @@ class PoolTest(unittest.TestCase):
             got, ["sea", "China", "JP Tokyo", "Hong Kong", "Taiwan", "South Korea"]
         )
 
+    def test_next_candidate_pia_custom_uses_fixed_regions_not_serversh(self):
+        # servers.sh dari setUp() cuma tahu Server-1/2 - kalau pia-custom
+        # kepeleset lewat _all_servers("pia") apa adanya, hasilnya bukan
+        # region sama sekali. servers.sh juga sengaja TIDAK dipanggil untuk
+        # provider ini (tidak dikenalnya) - lihat candidates._all_servers().
+        self._orig_regions = config.PIA_CUSTOM_REGIONS
+        config.PIA_CUSTOM_REGIONS = ["sg", "jakarta"]
+        try:
+            got = candidates._all_servers("pia-custom")
+        finally:
+            config.PIA_CUSTOM_REGIONS = self._orig_regions
+        self.assertEqual(got, ["sg", "jakarta"])
+
     def test_orchestrator_start_sets_wireguard_mtu_for_proton(self):
         with mock.patch.object(config, "WIREGUARD_MTU", "1280"), \
              mock.patch("pool.orchestrator.subprocess.run") as run:
@@ -105,6 +119,78 @@ class PoolTest(unittest.TestCase):
             orchestrator.start("slot-2", 9002, "proton", "node-id-01.protonvpn.net", proton_key="k")
         cmd = run.call_args[0][0]
         self.assertFalse(any(a.startswith("WIREGUARD_MTU=") for a in cmd))
+
+    def test_orchestrator_start_pia_custom_mounts_profile_and_skips_server_names(self):
+        with mock.patch("pool.orchestrator.pia_custom.ensure_profile", return_value=Path("/tmp/sg.ovpn")) as ensure, \
+             mock.patch("pool.orchestrator.subprocess.run") as run:
+            orchestrator.start("slot-5", 9005, "pia-custom", "sg", pia_user="u", pia_pass="p")
+        ensure.assert_called_once_with("sg", "u", "p")
+        cmd = run.call_args[0][0]
+        self.assertIn("VPN_SERVICE_PROVIDER=custom", cmd)
+        self.assertIn("OPENVPN_CUSTOM_CONFIG=/gluetun/custom.conf", cmd)
+        self.assertIn("OPENVPN_USER=u", cmd)
+        self.assertIn("-v", cmd)
+        self.assertIn("/tmp/sg.ovpn:/gluetun/custom.conf:ro", cmd)
+        # 'sg' cuma dipakai memilih profil, bukan diteruskan sebagai SERVER_NAMES
+        # (itu opsi mode provider bawaan gluetun, tidak berlaku di mode custom).
+        self.assertFalse(any(a.startswith("SERVER_NAMES=") for a in cmd))
+
+    def test_orchestrator_start_pia_custom_raises_when_profile_unavailable(self):
+        with mock.patch("pool.orchestrator.pia_custom.ensure_profile", return_value=None), \
+             mock.patch("pool.orchestrator.subprocess.run"):
+            with self.assertRaises(RuntimeError):
+                orchestrator.start("slot-5", 9005, "pia-custom", "sg", pia_user="u", pia_pass="p")
+
+    def _pia_custom_dir(self):
+        d = Path(config.ROOT) / "vpn-profile"
+        d.mkdir(exist_ok=True)
+        self._orig_profile_dir = config.PIA_CUSTOM_PROFILE_DIR
+        config.PIA_CUSTOM_PROFILE_DIR = str(d)
+        self.addCleanup(setattr, config, "PIA_CUSTOM_PROFILE_DIR", self._orig_profile_dir)
+        return d
+
+    def test_pia_custom_ensure_profile_reuses_fresh_file_without_downloading(self):
+        d = self._pia_custom_dir()
+        f = d / "sg-aes-128-cbc-udp-ip.ovpn"
+        f.write_text("client\n")
+        with mock.patch("pool.pia_custom.subprocess.run") as run:
+            got = pia_custom.ensure_profile("sg", "u", "p")
+        run.assert_not_called()
+        self.assertEqual(got, f)
+
+    def test_pia_custom_ensure_profile_downloads_when_missing(self):
+        d = self._pia_custom_dir()
+
+        def fake_run(cmd, **kwargs):
+            (d / "jakarta-aes-128-cbc-udp-ip.ovpn").write_text("client\n")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch("pool.pia_custom.subprocess.run", side_effect=fake_run) as run:
+            got = pia_custom.ensure_profile("jakarta", "u", "p")
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["env"]["PIA_USER"], "u")
+        self.assertEqual(got.name, "jakarta-aes-128-cbc-udp-ip.ovpn")
+
+    def test_pia_custom_ensure_profile_falls_back_to_stale_on_download_failure(self):
+        d = self._pia_custom_dir()
+        f = d / "sg-aes-128-cbc-udp-ip.ovpn"
+        f.write_text("client\n")
+        old = time.time() - 25 * 3600  # lebih tua dari PIA_CUSTOM_PROFILE_MAX_AGE_HOURS (24)
+        os.utime(f, (old, old))
+        with mock.patch(
+            "pool.pia_custom.subprocess.run",
+            return_value=mock.Mock(returncode=2, stdout="", stderr="login ditolak"),
+        ):
+            got = pia_custom.ensure_profile("sg", "u", "p")
+        # download gagal, tapi cache lama masih ada - lebih baik daripada slot mati
+        self.assertEqual(got, f)
+
+    def test_pia_custom_ensure_profile_none_without_credentials_or_cache(self):
+        self._pia_custom_dir()
+        with mock.patch("pool.pia_custom.subprocess.run") as run:
+            got = pia_custom.ensure_profile("sg", None, None)
+        run.assert_not_called()
+        self.assertIsNone(got)
 
     def test_orchestrator_start_proton_openvpn_mode(self):
         with mock.patch.object(config, "PROTON_VPN_TYPE", "openvpn"), \

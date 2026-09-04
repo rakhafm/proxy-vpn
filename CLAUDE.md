@@ -80,6 +80,7 @@ Berkas per tanggung jawab:
 | `config.py` | semua env var + pembaca kredensial; satu-satunya tempat default hidup |
 | `db.py` | koneksi SQLite + `_migrate()` untuk kolom yang ditambah belakangan |
 | `candidates.py` | pilih server; memanggil `../servers.sh` sebagai subprocess, tidak parse cache sendiri |
+| `pia_custom.py` | profil `.ovpn` provider `pia-custom`; memanggil `../legacy-ovpn/get-pia-ovpn.sh` sebagai subprocess |
 | `orchestrator.py` | `docker` CLI lewat subprocess (bukan docker-py) |
 | `probes.py` | dua jalur uji: `curl` per jam, Chrome-in-Docker harian |
 | `jobs.py` | rotasi harian & verifikasi per jam, notifikasi Discord |
@@ -120,6 +121,15 @@ Berkas per tanggung jawab:
   Job baru yang menyentuh keduanya wajib ikut didekorasi.
 - **`orchestrator.logs()` harus dipanggil sebelum `stop()`** — container yang sudah dihapus tidak
   punya log lagi.
+- **Provider `pia-custom` bukan varian `pia`, dan "server"-nya bukan hostname.** Slot ini
+  (opsional, `PIA_CUSTOM_SLOTS`, default 0 — **tambahan** di belakang `PIA_SLOTS`/`PROTON_SLOTS`,
+  bukan pengganti) jalan di mode `custom` gluetun dengan profil `.ovpn` dari config generator PIA.
+  Yang dikembalikan `next_candidate()` untuk provider ini adalah kode region milik
+  `get-pia-ovpn.sh` (`PIA_CUSTOM_REGIONS`, daftar tetap) — `servers.sh` tidak dipanggil, ia cuma
+  tahu `pia|proton`. Login + scrape HTML PIA cuma boleh ada satu implementasi: `pia_custom.py`
+  shell out ke skrip itu, tidak menulis ulang. Profil di-cache dan dipakai ulang selama
+  `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` — kalau ini jadi per percobaan kandidat, satu rotasi berarti
+  login ke akun PIA sampai `POOL_MAX_TRIES` × jumlah slot kali dalam hitungan menit.
 - **Kunci WireGuard Proton wajib satu per slot** (`PROTON_KEY_SLOT_N`); tidak ada fallback ke
   `PROTON_KEY` bersama. Kredensial OpenVPN Proton sebaliknya satu akun untuk semua slot.
 - **`next_candidate()` mengacak daftar** — tanpa itu klaster negara pertama secara abjad menghabiskan

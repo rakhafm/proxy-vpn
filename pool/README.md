@@ -33,6 +33,15 @@ Flask, tanpa build step — halaman menyegarkan diri sendiri tiap 30 detik lewat
   username/password khusus **"OpenVPN/IKEv2"** dari
   <https://account.proton.me/u/2/account-password>, BUKAN login akun Proton
   biasa.
+- **Provider `pia-custom` (opsional, default mati).** Selain server bawaan gluetun,
+  slot PIA bisa dijalankan dari profil `.ovpn` hasil config generator PIA — jalur
+  yang sama dengan `legacy-ovpn/`. Nyalakan dengan `PIA_CUSTOM_SLOTS=N`; slot-slot
+  itu **tambahan** di belakang `PIA_SLOTS`+`PROTON_SLOTS`, bukan penggantinya, jadi
+  keduanya bisa dibandingkan berdampingan. Kredensialnya sama (`.pia-credentials`).
+  Profil di-download lewat `legacy-ovpn/get-pia-ovpn.sh` dan di-cache di
+  `PIA_CUSTOM_PROFILE_DIR` (default `pool/vpn-profile/`, gitignored, sengaja
+  terpisah dari `legacy-ovpn/vpn-profile/` supaya kebijakan refresh-nya tidak
+  tercampur dengan file yang disimpan manual di sana).
 - `servers-pia.txt` / `servers-proton.txt` di root repo sudah ada (`./servers.sh
   pia -r`, `./servers.sh proton -r`) — pool manager membaca cache ini untuk daftar
   kandidat, tidak menjalankan `gluetun format-servers` sendiri.
@@ -138,6 +147,10 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | Var | Default | Guna |
 |---|---|---|
 | `PIA_SLOTS` / `PROTON_SLOTS` | `3` / `3` | jumlah slot per provider |
+| `PIA_CUSTOM_SLOTS` | `0` | slot **tambahan** yang pakai profil `.ovpn` dari config generator PIA (mode `custom` gluetun), bukan server bawaan image |
+| `PIA_CUSTOM_REGIONS` | `sg,jakarta,kualalumpur,philippines,vietnam` | daftar region TETAP untuk `pia-custom` — kode region milik `get-pia-ovpn.sh` (`./legacy-ovpn/get-pia-ovpn.sh -l`), bukan hostname; `servers.sh` tidak dipakai untuk provider ini |
+| `PIA_CUSTOM_PROFILE_DIR` | `pool/vpn-profile` | cache profil `.ovpn` milik pool (terpisah dari `legacy-ovpn/vpn-profile/`) |
+| `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` | `24` | umur profil sebelum di-download ulang — disetel sepanjang siklus rotasi supaya tidak login ke akun PIA berkali-kali per rotasi |
 | `POOL_CANDIDATE_GROUP` | `sea` | grup `servers.sh` untuk kandidat — `sea`, `asia`, atau nama negara/region persis |
 | `POOL_PORT_BASE` | `9000` | port slot pertama = base+1 |
 | `POOL_API_PORT` | `8080` | port Flask |
