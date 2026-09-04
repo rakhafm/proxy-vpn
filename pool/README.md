@@ -81,8 +81,19 @@ marker. `detail` di baris `/probes` menyebut nama filenya.
 
 ## Dua probe, dan kenapa `connecting` dipisah dari `inconclusive`
 
-Probe **harian** memuat halaman pencarian di Chrome sungguhan dan menghitung
-`OLX_SEARCH_MARKERS` — itu satu-satunya vonis "bersih" yang bisa dipercaya.
+Probe **harian** memuat `OLX_URL` di Chrome sungguhan. Sejak 2026-09-03 URL itu
+adalah **root domain**, bukan halaman pencarian lagi, dan vonisnya dijatuhkan dari
+ada/tidaknya `id="referenceNum"` — bukan lagi dari jumlah `OLX_SEARCH_MARKERS`.
+Alasannya: Akamai terbukti me-redirect diam-diam `mobil-bekas_c198` ke homepage
+(200 penuh, 0/5 marker, tanpa `referenceNum`), dan aturan lama menjatuhkan itu
+sebagai `blocked` — mencoret exit yang homepage-nya sendiri bersih.
+
+Halaman pencarian tetap dibuka lewat `OLX_VALIDATE_URL`, tapi **non-gating**:
+jumlah marker dan buktinya disimpan (`<slot>-<waktu>-validate.{html,png}`) dan
+tidak pernah mengubah exit code probe. Ini melonggarkan jaminan PRD "vonis pool =
+vonis crawler" secara sadar — slot bisa `active` walau listing masih diredirect.
+Kalau `OLX_VALIDATE_URL` konsisten nol marker sementara `OLX_URL` bersih, itu
+tandanya redirect diam tadi masih berlangsung.
 
 Probe **per jam** murah dan jalan dua langkah:
 
@@ -116,9 +127,10 @@ Sisanya menyusul dari situ:
   keduanya bisa tumpang tindih: dua probe di proxy-1 mencatat `curl exit 7`
   ("port 9003 after 0 ms") tepat saat rotasi sedang di antara dua kandidat.
 
-Konsekuensi yang perlu disadari: karena probe per jam tidak lagi menyentuh
-halaman pencarian, blokir yang hanya muncul di path itu baru ketahuan pada probe
-harian berikutnya. Jalur cepatnya tetap `POST /slots/<id>/bad` — konsumen yang
+Konsekuensi yang perlu disadari: sejak vonis harian ikut pindah ke root domain,
+blokir yang **hanya** muncul di path pencarian tidak lagi menjatuhkan slot sama
+sekali — cuma tercatat sebagai validasi non-gating. Jalur cepatnya tetap
+`POST /slots/<id>/bad` — konsumen yang
 benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`.
 
 ## Variabel lingkungan
@@ -136,6 +148,8 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | `POOL_FAIL_STREAK_LIMIT` | `3` | berapa probe per jam gagal berturut-turut sebelum slot dicoret dari `/proxies`; `1` = perilaku lama |
 | `POOL_RECHECK_SECONDS` | `300` | selang cek ulang khusus slot yang tidak aktif |
 | `POOL_ROTATE_STUCK` | `1` | `1` = slot yang macet **`connecting`** dirotasi otomatis setelah menembus streak |
+| `OLX_URL` | `https://www.olx.co.id/` | URL yang **menggerbang** vonis probe harian - root domain, dinilai dari `referenceNum` |
+| `OLX_VALIDATE_URL` | `https://www.olx.co.id/mobil-bekas_c198` | halaman listing, dites di probe harian untuk bukti/log saja - **tidak** mengubah vonis; kosongkan untuk melewati |
 | `OLX_HOURLY_URL` | `https://www.olx.co.id/` | URL probe per jam - root domain, bukan halaman pencarian |
 | `IP_CHECK_URL` | `https://ifconfig.me/ip` | endpoint netral untuk memastikan tunnel hidup |
 | `POOL_MAX_TRIES` | `5` | percobaan kandidat maksimum per slot per rotasi |

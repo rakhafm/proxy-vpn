@@ -437,7 +437,7 @@ class PoolTest(unittest.TestCase):
             probes.run_hourly(9001)
         urls = [call.args[0][-1] for call in run.call_args_list]
         self.assertEqual(urls, [config.IP_CHECK_URL, config.OLX_HOURLY_URL])
-        self.assertNotIn(config.OLX_URL, urls)
+        self.assertNotIn(config.OLX_VALIDATE_URL, urls)
 
     # --- penerapan vonis: streak, toleransi, rotasi otomatis --------------
 

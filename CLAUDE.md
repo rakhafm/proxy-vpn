@@ -102,10 +102,19 @@ Berkas per tanggung jawab:
   *bersih* butuh browser sungguhan.
 - **`run_hourly` memakai binary `curl`, bukan `requests`.** Fingerprint TLS/HTTP2 `requests`
   disuguhi silent-timeout oleh Akamai. Jangan "rapikan" jadi library HTTP.
-- **Probe per jam menembak root domain, probe harian menembak halaman pencarian.** Jangan
-  satukan: `curl` ke path pencarian di-reset Akamai (exit 92) walau exit IP-nya bersih.
-  Klasifikasinya lewat dua URL, bukan lewat daftar exit code curl — daftar kode langsung basi
-  kalau Akamai ganti cara menolak.
+- **Probe per jam dan probe harian sama-sama menggerbang vonis dari root domain sejak
+  2026-09-03**, bukan dari halaman pencarian lagi. `mobil-bekas_c198` terbukti diredirect diam
+  oleh Akamai ke homepage (200 penuh, 0/5 `OLX_SEARCH_MARKERS`, tanpa `referenceNum`) — dulu ini
+  jatuh sebagai `blocked` dan mencoret exit yang sebenarnya bersih. Vonis sekarang: `id="referenceNum"`
+  ditemukan di root domain → `blocked`; tidak ada → lolos. `OLX_VALIDATE_URL` (listing, default
+  `mobil-bekas_c198`) tetap dites di probe harian tapi **non-gating** — hasilnya cuma tercatat ke
+  bukti/log, tidak pernah mengubah exit code. Ini keputusan sadar yang melonggarkan jaminan PRD
+  "vonis pool = vonis crawler" (dulu satu-satunya kriteria lolos adalah `OLX_SEARCH_MARKERS`
+  produksi) — proxy tetap terbit selama homepage-nya bersih walau listing masih diredirect.
+- **`run_hourly` mengklasifikasi lewat dua langkah URL** (endpoint netral `IP_CHECK_URL` dulu,
+  baru `OLX_HOURLY_URL`), bukan lewat daftar exit code curl — daftar kode langsung basi kalau
+  Akamai ganti cara menolak. Ini yang memisahkan `connecting` (tunnel mati) dari `inconclusive`
+  (tunnel hidup, OLX saja tidak menjawab).
 - **Semua job antre di `jobs.JOB_LOCK` lewat `@jobs.serialized`.** Rotasi dan verifikasi
   sama-sama menyentuh Docker + tabel `slots` dari thread berbeda (scheduler vs request Flask).
   Job baru yang menyentuh keduanya wajib ikut didekorasi.

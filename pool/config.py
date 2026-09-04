@@ -26,16 +26,32 @@ DB_PATH = os.environ.get("POOL_DB", str(ROOT / "pool" / "pool.db"))
 API_PORT = int(os.environ.get("POOL_API_PORT", "8080"))
 ADVERTISE_HOST = os.environ.get("POOL_ADVERTISE_HOST", "127.0.0.1")
 
-# URL halaman hasil pencarian - dipakai probe HARIAN (browser sungguhan),
-# karena cuma di halaman inilah OLX_SEARCH_MARKERS bisa dihitung.
-OLX_URL = os.environ.get("OLX_URL", "https://www.olx.co.id/mobil-bekas_c198")
+# URL yang menggerbang vonis probe HARIAN (browser sungguhan). Sejak
+# 2026-09-03 ini root domain, BUKAN halaman listing: OLX/Akamai terbukti
+# membalas mobil-bekas_c198 dengan redirect diam-diam ke homepage (200,
+# byte penuh, 0/5 OLX_SEARCH_MARKERS - bukan referenceNum) - vonis 'blocked'
+# yang sebelumnya jatuh di sini akhirnya mencoret exit yang homepage-nya
+# sendiri bersih. Root domain dipakai sebagai penanda tunggal yang sama
+# dengan cek per-jam (lihat OLX_HOURLY_URL) supaya kedua job konsisten.
+# Keputusan sadar: ini melonggarkan jaminan PRD "vonis pool = vonis
+# crawler" (OLX_SEARCH_MARKERS produksi) - slot bisa 'active' walau
+# mobil-bekas_c198 masih diblokir. Trade-off yang diambil: proxy tetap
+# terbit selama homepage-nya bersih; cek listing dipindah jadi validasi
+# non-gating, lihat OLX_VALIDATE_URL.
+OLX_URL = os.environ.get("OLX_URL", "https://www.olx.co.id/")
 
-# URL yang dipakai probe PER JAM. Sengaja root domain, BUKAN OLX_URL: sejak
-# 2026-09-02 Akamai me-reset stream HTTP/2 untuk `curl` di path pencarian
-# (exit 92) bahkan pada exit IP yang probe browser buktikan bersih beberapa
-# menit sebelumnya - 17/21 vonis 'connecting' di proxy-1 dan 20/29 di proxy-2
-# ternyata false negative jenis ini. Root domain lewat proxy yang sama membalas
-# normal (586 KB). Halaman deny Akamai bersifat per-IP, jadi kalau exit-nya
+# URL listing untuk VALIDASI SAJA di probe harian - dicatat ke bukti/log,
+# TIDAK dipakai menjatuhkan atau meluluskan slot (lihat olx_probe.py). Kalau
+# ini konsisten gagal sementara OLX_URL bersih, itu tandanya redirect diam
+# Akamai di atas masih berlangsung untuk path pencarian.
+OLX_VALIDATE_URL = os.environ.get("OLX_VALIDATE_URL", "https://www.olx.co.id/mobil-bekas_c198")
+
+# URL yang dipakai probe PER JAM (curl). Root domain sejak 2026-09-02: Akamai
+# me-reset stream HTTP/2 untuk `curl` di path pencarian (exit 92) bahkan pada
+# exit IP yang probe browser buktikan bersih beberapa menit sebelumnya -
+# 17/21 vonis 'connecting' di proxy-1 dan 20/29 di proxy-2 ternyata false
+# negative jenis ini. Root domain lewat proxy yang sama membalas normal
+# (586 KB). Halaman deny Akamai bersifat per-IP, jadi kalau exit-nya
 # benar-benar ditolak, root domain pun ikut membawa referenceNum - vonis
 # 'blocked' tidak hilang ketajamannya. Memaksa --http1.1 BUKAN obatnya: dites,
 # malah timeout 5/5.

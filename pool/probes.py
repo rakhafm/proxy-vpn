@@ -72,7 +72,11 @@ def run_daily(port, slot_id, timeout=90):
     disimpan ke pool/probe-out/ - bukti yang sama gunanya dengan probe.js,
     dan satu-satunya cara memeriksa "apa yang sebenarnya OLX kirim" tanpa
     menonton Chrome langsung. Return (verdict, detail); verdict 'ok' |
-    'blocked' | 'error'."""
+    'blocked' | 'error'.
+
+    Vonis dipatok ke OLX_URL (root domain, pola referenceNum) - lihat
+    komentar di config.py. OLX_VALIDATE_URL (listing) ikut dites dan
+    dicatat ke bukti/detail tapi TIDAK ikut menentukan verdict."""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     name = f"{slot_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     script = config.ROOT / "pool" / "probe" / "olx_probe.py"
@@ -86,6 +90,7 @@ def run_daily(port, slot_id, timeout=90):
         "docker", "run", "--rm", "--network", "host",
         "-e", f"PROXIES=http://127.0.0.1:{port}",
         "-e", f"OLX_URL={config.OLX_URL}",
+        "-e", f"OLX_VALIDATE_URL={config.OLX_VALIDATE_URL}",
         "-e", "PROBE_OUT_DIR=/out",
         "-e", f"PROBE_OUT_NAME={name}",
         "-v", f"{script}:/app/olx_probe.py:ro",
