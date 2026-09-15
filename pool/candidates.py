@@ -36,7 +36,7 @@ def _all_servers(provider):
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
-def next_candidate(conn, provider, in_use):
+def next_candidate(conn, provider, in_use, servers=None):
     """Server ACAK yang belum gagal BARU-BARU INI dan sedang tidak dipakai
     slot lain. Kegagalan lama (lebih tua dari CANDIDATE_RETRY_HOURS) tidak
     lagi mengecualikan - blokir OLX bergerak per-IP dalam hitungan jam
@@ -66,7 +66,10 @@ def next_candidate(conn, provider, in_use):
         )
     }
     skip = failed | set(in_use)
-    servers = _all_servers(provider)
+    # pia-custom memberi daftar file .ovpn cache yang sudah dideduplikasi,
+    # bukan daftar region. Provider lain tetap mengambil daftar dari
+    # servers.sh seperti semula.
+    servers = list(servers) if servers is not None else _all_servers(provider)
     random.shuffle(servers)
     for server in servers:
         if server not in skip:

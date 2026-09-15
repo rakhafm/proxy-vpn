@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from . import candidates, config, orchestrator, probes
+from . import candidates, config, orchestrator, pia_custom, probes
 
 log = logging.getLogger("pool.jobs")
 
@@ -80,12 +80,16 @@ def _notify_pool_state(conn):
         return
     total = conn.execute("SELECT COUNT(*) n FROM slots").fetchone()["n"]
     active = conn.execute("SELECT COUNT(*) n FROM slots WHERE status='active'").fetchone()["n"]
+    # Hostname mesin pengirim, bukan server VPN slot: satu webhook dipakai
+    # beberapa pool manager (proxy-1, proxy-2, dev), dan tanpa penanda ini
+    # pesannya identik. Backtick = blok kode di Discord, biar gampang dipindai.
+    host = f"`{config.NOTIFY_HOSTNAME}`"
     if active == total:
-        content = f"✅ OLX proxy pool sehat - {active}/{total} slot aktif."
+        content = f"✅ {host} OLX proxy pool sehat - {active}/{total} slot aktif."
     elif active == 0:
-        content = "⚠️ OLX proxy pool kosong - tidak ada slot aktif."
+        content = f"⚠️ {host} OLX proxy pool kosong - tidak ada slot aktif."
     else:
-        content = f"⚠️ OLX proxy pool degradasi - {active}/{total} slot aktif."
+        content = f"⚠️ {host} OLX proxy pool degradasi - {active}/{total} slot aktif."
     try:
         requests.post(config.DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10)
     except requests.RequestException as e:
@@ -112,6 +116,15 @@ def _active_servers(conn, provider):
 def rotate_slot(conn, slot, pia_user, pia_pass):
     """Coba pasang kandidat baru ke satu slot sampai lolos atau kehabisan
     percobaan. Slot lama (kalau ada) dimatikan lebih dulu."""
+    # Tarik slot dari daftar terbit SEBELUM container lama dihentikan. Selain
+    # mencegah /proxies menunjuk port yang sudah mati selama rotasi, ini
+    # memastikan kandidat milik slot ini sendiri tidak ikut dihitung sebagai
+    # `in_use`. Tanpa transisi ini, pool dengan satu kandidat (mis. cuma
+    # pia-custom region jakarta) tidak pernah bisa dirotasi saat statusnya
+    # masih active: jakarta dikecualikan oleh barisnya sendiri, lalu slot
+    # jatuh dead dengan "kandidat habis".
+    conn.execute("UPDATE slots SET status='connecting' WHERE id=?", (slot["id"],))
+    conn.commit()
     orchestrator.stop(slot["id"])
     in_use = _active_servers(conn, slot["provider"]) | _active_ips(conn)
 
@@ -122,8 +135,21 @@ def rotate_slot(conn, slot, pia_user, pia_pass):
     if slot["provider"] == "proton" and config.PROTON_VPN_TYPE == "openvpn":
         proton_user, proton_pass = config.proton_credentials()
 
+    # Untuk pia-custom, kandidat bukan region (jakarta) melainkan nama file
+    # profile cache. Cache yang punya remote IP sama disaring oleh
+    # ensure_profiles(), sehingga dua slot bisa memakai dua endpoint unik dari
+    # Jakarta dan kegagalan satu profile dapat lanjut ke profile berikutnya.
+    custom_profiles = {}
+    if slot["provider"] == "pia-custom":
+        for region in config.PIA_CUSTOM_REGIONS:
+            for profile in pia_custom.ensure_profiles(region, pia_user, pia_pass):
+                custom_profiles[profile.name] = profile
+
     for attempt in range(1, config.MAX_CANDIDATE_TRIES + 1):
-        server = candidates.next_candidate(conn, slot["provider"], in_use)
+        server = candidates.next_candidate(
+            conn, slot["provider"], in_use,
+            servers=custom_profiles if slot["provider"] == "pia-custom" else None,
+        )
         if server is None:
             log.warning("slot %s: kandidat %s habis", slot["id"], slot["provider"])
             break
@@ -136,6 +162,7 @@ def rotate_slot(conn, slot, pia_user, pia_pass):
                 slot["id"], slot["port"], slot["provider"], server,
                 pia_user=pia_user, pia_pass=pia_pass, proton_key=proton_key,
                 proton_user=proton_user, proton_pass=proton_pass,
+                custom_profile=custom_profiles.get(server),
             )
         except Exception as e:
             log.error("slot %s: docker run gagal untuk %s: %s", slot["id"], server, e)

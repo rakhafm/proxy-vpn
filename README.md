@@ -54,8 +54,10 @@ Pendukung:
 
 ## Jalur lama: profil `.ovpn` tulis-sendiri
 
-Pindah ke [legacy-ovpn/](legacy-ovpn/README.md) — `get-pia-ovpn.sh`, `sweep-asia.sh`,
-`daily.sh`, dan `docker-compose.yml` mode `custom`. Digantikan jalur provider bawaan di bawah,
+Pindah ke [legacy-ovpn/](legacy-ovpn/README.md) — `sweep-asia.sh`, `daily.sh`, dan
+`docker-compose.yml` mode `custom`. Generatornya sendiri, [`pool/get-pia-ovpn.sh`](pool/get-pia-ovpn.sh),
+tinggal di `pool/` supaya ikut ter-deploy ke VM; jalur ini memanggilnya lewat `..`.
+Digantikan jalur provider bawaan di bawah,
 tapi tetap disimpan karena `vpn-pia` di `crawler-prod` masih memakai `custom.conf`, dan karena
 daftar server bawaan gluetun bisa sewaktu-waktu basi.
 
@@ -187,7 +189,7 @@ fingerprint TLS-nya tidak cocok. `probe.js` dan `shot.sh` sudah memakai UA yang 
 
 **Profil GCM dari PIA memuat `ncp-disable`.** Opsi itu dihapus di OpenVPN 2.6 dan bersifat
 fatal, sedangkan gluetun memakai 2.6.20 — 10 profil gagal connect karena ini.
-`legacy-ovpn/get-pia-ovpn.sh` sekarang membuangnya saat generate.
+`pool/get-pia-ovpn.sh` sekarang membuangnya saat generate.
 
 **Label cipher pada profil tidak mencerminkan kenyataan.** OpenVPN 2.6 mengabaikan
 `--cipher` dan menegosiasi lewat `--data-ciphers`, jadi profil `aes-128-cbc` sebenarnya
@@ -250,7 +252,7 @@ Sampai itu jalan di VM (Fase 3), cron untuk jalur lama:
 (crontab -l 2>/dev/null; echo "0 7 * * * cd $PWD/legacy-ovpn && ./daily.sh >> ../daily.log 2>&1") | crontab -
 ```
 
-Exit code `legacy-ovpn/get-pia-ovpn.sh`: **1** salah pakai · **2** login ditolak ·
+Exit code `pool/get-pia-ovpn.sh`: **1** salah pakai · **2** login ditolak ·
 **3** markup halaman berubah · **4** respons generate bukan file config.
 
 ## Catatan rapuh

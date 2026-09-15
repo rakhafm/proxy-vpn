@@ -5,11 +5,17 @@
 #   printf '%s\n%s\n' 'pXXXXXXX' 'passwordnya' > ~/.pia-credentials && chmod 600 ~/.pia-credentials
 # Atau lewat env: PIA_USER / PIA_PASS.
 #
-# Usage: ./get-pia-ovpn.sh [-l] [-t TYPE] [-v VER] [-p PLATFORM] [--no-ip] [--dedup-ip] [-s SUFFIX] REGION...
+# Skrip ini tinggal di pool/ supaya ikut ter-scp ke VM oleh pool/deploy/deploy.sh
+# (yang cuma menyalin "pool servers.sh") - tanpa itu slot pia-custom di produksi
+# tidak pernah bisa generate profil. legacy-ovpn/daily.sh memanggilnya dari sini
+# juga; INI SATU-SATUNYA implementasi login+scrape PIA, jangan disalin balik.
+#
+# Usage: ./pool/get-pia-ovpn.sh [-l] [-t TYPE] [-v VER] [-p PLATFORM] [--no-ip] [--dedup-ip] [-s SUFFIX] REGION...
 #   -l          tampilkan daftar kode region (kolom: benua, kode) lalu keluar
 #   -t TYPE     aes-128-cbc-udp (default) | aes-256-cbc-udp | aes-128-gcm-udp | aes-256-gcm-udp
 #               aes-128-cbc-tcp | aes-256-cbc-tcp | aes-128-gcm-tcp | aes-256-gcm-tcp
-#               udp = keempat tipe UDP sekaligus; tcp = keempat tipe TCP
+#               udp = keempat tipe UDP; tcp = keempat tipe TCP; all = seluruh
+#               delapan tipe UDP+TCP sekaligus.
 #   -v VER      2.4 (default) | 2.3
 #   -p PLATFORM desktop (default) | mobile
 #   --no-ip     pakai hostname server; default pakai IP (Use IP dicentang)
@@ -19,16 +25,18 @@
 #               suffix. Berguna untuk run harian: profil lama tidak tertimpa, jadi bisa dibandingkan.
 #   REGION      kode region, nama benua (asia|europe|north-america|south-america|oceania|africa),
 #               atau "all" untuk semua region
-# Contoh: ./get-pia-ovpn.sh sg japan jakarta
-#         ./get-pia-ovpn.sh -t udp asia     # semua region Asia x semua tipe UDP
-#         ./get-pia-ovpn.sh -t udp all      # semua region x semua tipe UDP
+# Contoh: ./pool/get-pia-ovpn.sh sg japan jakarta
+#         ./pool/get-pia-ovpn.sh -t udp asia     # semua region Asia x semua tipe UDP
+#         ./pool/get-pia-ovpn.sh -t all --dedup-ip jakarta  # 8 tipe, satu per IP remote
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")"   # skrip ini hidup di pool/, root repo ada di ..
 
 SITE=https://www.privateinternetaccess.com
 GEN=$SITE/account/ovpn-config-generator
-OUT="${PIA_OUT:-vpn-profile}"
+OUT="${PIA_OUT:-vpn-profile}"   # relatif ke pool/ -> default = pool/vpn-profile
 CRED_FILE="${PIA_CREDENTIALS:-}"
+# ".." = root repo di mesin dev, dan $REMOTE (/opt/proxy-pool, tempat deploy.sh
+# menaruh .pia-credentials) di VM - sama seperti waktu skrip ini di legacy-ovpn/.
 [ -n "$CRED_FILE" ] || for c in ../.pia-credentials .pia-credentials "$HOME/.pia-credentials"; do
   [ -r "$c" ] && { CRED_FILE=$c; break; }
 done
@@ -119,6 +127,7 @@ set -- $targets
 
 case "$type" in
   udp|tcp) types="aes-128-cbc-$type aes-256-cbc-$type aes-128-gcm-$type aes-256-gcm-$type" ;;
+  all)     types="aes-128-cbc-udp aes-256-cbc-udp aes-128-gcm-udp aes-256-gcm-udp aes-128-cbc-tcp aes-256-cbc-tcp aes-128-gcm-tcp aes-256-gcm-tcp" ;;
   *)       types=$type ;;
 esac
 

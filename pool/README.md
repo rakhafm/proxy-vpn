@@ -38,10 +38,16 @@ Flask, tanpa build step — halaman menyegarkan diri sendiri tiap 30 detik lewat
   yang sama dengan `legacy-ovpn/`. Nyalakan dengan `PIA_CUSTOM_SLOTS=N`; slot-slot
   itu **tambahan** di belakang `PIA_SLOTS`+`PROTON_SLOTS`, bukan penggantinya, jadi
   keduanya bisa dibandingkan berdampingan. Kredensialnya sama (`.pia-credentials`).
-  Profil di-download lewat `legacy-ovpn/get-pia-ovpn.sh` dan di-cache di
+  Profil di-download lewat `pool/get-pia-ovpn.sh` dan di-cache di
   `PIA_CUSTOM_PROFILE_DIR` (default `pool/vpn-profile/`, gitignored, sengaja
   terpisah dari `legacy-ovpn/vpn-profile/` supaya kebijakan refresh-nya tidak
-  tercampur dengan file yang disimpan manual di sana).
+  tercampur dengan file yang disimpan manual di sana). Saat cache dibuat,
+  pool meminta seluruh 8 pilihan UDP/TCP dari generator PIA dengan **Use IP**
+  dan menyimpan hanya satu profil per IP `remote` yang unik. Setiap refresh
+  memakai suffix waktu; profil batch sebelumnya dipertahankan sebagai backup.
+  Setiap file profile unik adalah kandidat tersendiri: dua slot boleh memakai
+  dua profile Jakarta yang berbeda, dan profile berikutnya dicoba bila yang
+  pertama diblokir/gagal.
 - `servers-pia.txt` / `servers-proton.txt` di root repo sudah ada (`./servers.sh
   pia -r`, `./servers.sh proton -r`) — pool manager membaca cache ini untuk daftar
   kandidat, tidak menjalankan `gluetun format-servers` sendiri.
@@ -148,9 +154,9 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 |---|---|---|
 | `PIA_SLOTS` / `PROTON_SLOTS` | `3` / `3` | jumlah slot per provider |
 | `PIA_CUSTOM_SLOTS` | `0` | slot **tambahan** yang pakai profil `.ovpn` dari config generator PIA (mode `custom` gluetun), bukan server bawaan image |
-| `PIA_CUSTOM_REGIONS` | `sg,jakarta,kualalumpur,philippines,vietnam` | daftar region TETAP untuk `pia-custom` — kode region milik `get-pia-ovpn.sh` (`./legacy-ovpn/get-pia-ovpn.sh -l`), bukan hostname; `servers.sh` tidak dipakai untuk provider ini |
+| `PIA_CUSTOM_REGIONS` | `sg,jakarta,kualalumpur,philippines,vietnam` | daftar region TETAP untuk menyegarkan cache `pia-custom` — setiap profile ber-IP `remote` unik dari region ini menjadi kandidat sendiri; `servers.sh` tidak dipakai |
 | `PIA_CUSTOM_PROFILE_DIR` | `pool/vpn-profile` | cache profil `.ovpn` milik pool (terpisah dari `legacy-ovpn/vpn-profile/`) |
-| `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` | `24` | umur profil sebelum di-download ulang — disetel sepanjang siklus rotasi supaya tidak login ke akun PIA berkali-kali per rotasi |
+| `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` | `12` | umur profil sebelum di-download ulang — disetel sepanjang siklus rotasi supaya tidak login ke akun PIA berkali-kali per rotasi |
 | `POOL_CANDIDATE_GROUP` | `sea` | grup `servers.sh` untuk kandidat — `sea`, `asia`, atau nama negara/region persis |
 | `POOL_PORT_BASE` | `9000` | port slot pertama = base+1 |
 | `POOL_API_PORT` | `8080` | port Flask |
@@ -168,6 +174,7 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | `POOL_MAX_TRIES` | `5` | percobaan kandidat maksimum per slot per rotasi |
 | `POOL_CANDIDATE_RETRY_HOURS` | `24` | jam sebelum server yang gagal/blocked boleh dicoba lagi |
 | `DISCORD_WEBHOOK_URL` | — | kalau diset, kirim pesan ke sini saat kolam tidak penuh (sebagian atau semua slot mati) di akhir tiap job |
+| `POOL_HOSTNAME` | hostname mesin | penanda pengirim di tiap pesan Discord — yang membedakan proxy-1, proxy-2, dan mesin dev kalau webhook-nya sama |
 | `PROBE_IMAGE` | `olx-pool-probe:latest` | image probe harian sendiri, hasil `docker build pool/probe/` |
 | `PIA_CREDENTIALS` | cari `.pia-credentials` di root lalu `$HOME` | path kredensial PIA |
 | `PROTON_VPN_TYPE` | `wireguard` | `wireguard` (kunci per slot) atau `openvpn` (satu akun untuk semua slot Proton) |

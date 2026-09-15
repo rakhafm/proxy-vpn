@@ -16,7 +16,7 @@ def container_name(slot_id):
 
 
 def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
-          proton_key=None, proton_user=None, proton_pass=None):
+          proton_key=None, proton_user=None, proton_pass=None, custom_profile=None):
     name = container_name(slot_id)
     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -38,11 +38,10 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
         if config.OPENVPN_MSSFIX:
             env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
     elif provider == "pia-custom":
-        # `server` di sini kode region (lihat candidates._all_servers), bukan
-        # hostname - mode gluetun 'custom' (sama seperti legacy-ovpn/
-        # docker-compose.yml), profil-nya di-download/di-cache oleh
-        # pia_custom.ensure_profile(), bukan server bawaan image gluetun.
-        profile = pia_custom.ensure_profile(server, pia_user, pia_pass)
+        # `server` adalah nama file kandidat dan `custom_profile` path yang
+        # sudah dipilih jobs.rotate_slot(). Fallback hanya untuk kompatibilitas
+        # caller lama yang masih memberi kode region.
+        profile = custom_profile or pia_custom.ensure_profile(server, pia_user, pia_pass)
         if profile is None:
             raise RuntimeError(
                 f"profil PIA custom untuk region {server} tidak tersedia "

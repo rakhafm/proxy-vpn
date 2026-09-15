@@ -1,5 +1,6 @@
 import os
 import pathlib
+import socket
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -8,7 +9,7 @@ PIA_SLOTS = int(os.environ.get("PIA_SLOTS", "3"))
 PROTON_SLOTS = int(os.environ.get("PROTON_SLOTS", "3"))
 # Opsional, default 0 (mati) - provider terpisah, bukan pengganti PIA_SLOTS.
 # Pakai profil .ovpn hasil download dari config generator PIA (lihat
-# pool/pia_custom.py + legacy-ovpn/get-pia-ovpn.sh), bukan server bawaan
+# pool/pia_custom.py + pool/get-pia-ovpn.sh), bukan server bawaan
 # gluetun. Eksperimen 2026-09-03: satu profil begini terbukti lolos sampai
 # ke halaman listing (markers penuh) di saat server bawaan gluetun untuk
 # region yang sama kena redirect homepage - belum tentu sistematis, jadi
@@ -27,7 +28,7 @@ SLOT_DEFS = [
 # Region TETAP untuk provider pia-custom - bukan "all", supaya rotasi harian
 # (sampai POOL_MAX_TRIES percobaan per slot) tidak login+generate ke akun PIA
 # terlalu sering (risiko rate-limit/flag akun). Kode ini milik
-# get-pia-ovpn.sh sendiri (lihat "./legacy-ovpn/get-pia-ovpn.sh -l"), padanan
+# get-pia-ovpn.sh sendiri (lihat "./pool/get-pia-ovpn.sh -l"), padanan
 # kasar dari grup "sea" PIA di servers.sh (Singapore|Indonesia|Malaysia|
 # Philippines|Vietnam).
 PIA_CUSTOM_REGIONS = [
@@ -48,7 +49,7 @@ PIA_CUSTOM_PROFILE_DIR = os.environ.get(
 # dengan siklus rotasi harian, bukan sekali per percobaan kandidat (bisa
 # sampai POOL_MAX_TRIES x tiap slot pia-custom per rotasi) - itu berarti
 # login ke akun PIA berkali-kali dalam hitungan menit tiap hari.
-PIA_CUSTOM_PROFILE_MAX_AGE_HOURS = int(os.environ.get("PIA_CUSTOM_PROFILE_MAX_AGE_HOURS", "24"))
+PIA_CUSTOM_PROFILE_MAX_AGE_HOURS = int(os.environ.get("PIA_CUSTOM_PROFILE_MAX_AGE_HOURS", "12"))
 
 # Satu atau lebih grup dikenal servers.sh, dipisah koma: sea (Asia Tenggara,
 # default) | asia | nama negara/region persis (mis. "China", "JP Tokyo" untuk
@@ -113,6 +114,13 @@ CANDIDATE_RETRY_HOURS = int(os.environ.get("POOL_CANDIDATE_RETRY_HOURS", "24"))
 # salin URL-nya) buat notifikasi kolam tidak penuh (sebagian atau semua slot
 # mati). Kosong = notifikasi dimatikan.
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
+# Nama mesin yang dicantumkan di tiap notifikasi Discord. Satu webhook dipakai
+# beberapa pool manager sekaligus (proxy-1, proxy-2, dan mesin dev yang
+# kebetulan jalan) - tanpa ini pesan "kolam kosong" tidak bisa dilacak ke VM
+# mana, dan dua VM sehat terlihat seperti satu VM yang mengirim dobel.
+# POOL_HOSTNAME menimpanya kalau hostname mesin tidak informatif.
+NOTIFY_HOSTNAME = os.environ.get("POOL_HOSTNAME") or socket.gethostname()
 
 DAILY_TIME = os.environ.get("POOL_DAILY_TIME", "03:00")  # HH:MM, Asia/Jakarta
 HOURLY_REFILL = os.environ.get("HOURLY_REFILL", "0") == "1"

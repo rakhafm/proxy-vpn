@@ -23,6 +23,11 @@ kolom DB dan variabel campuran (`negara`, `org`, `diblokir`, `alasan`). Ikuti po
 
 ## Perintah
 
+`Makefile` di root membungkus semua perintah di bawah (`make help` untuk daftar; `make -n <target>`
+mencetak perintah aslinya). Itu pembungkus tipis, bukan sumber kebenaran — perintah di bawah tetap
+yang asli, dan target `DANGER-*` (reset DB, hapus bukti, deploy) sengaja tidak pernah jadi
+prasyarat target lain.
+
 Jalur manual (butuh Docker, Chrome, `npx playwright`):
 
 ```bash
@@ -44,7 +49,8 @@ PIA_SLOTS=3 PROTON_SLOTS=3 PROTON_KEY_SLOT_4=... \
 .venv-pool/bin/python3 -m pool.test_pool -v PoolTest.test_next_candidate_skips_failed   # satu test
 ```
 
-Tidak ada linter/formatter yang dikonfigurasi di repo ini.
+Tidak ada linter/formatter yang dikonfigurasi di repo ini. Yang terdekat: `make check`
+(= `bash -n` semua skrip + `pool.test_pool`) — jalankan sebelum commit.
 
 Memicu job manual tanpa menunggu jadwal:
 
@@ -80,7 +86,8 @@ Berkas per tanggung jawab:
 | `config.py` | semua env var + pembaca kredensial; satu-satunya tempat default hidup |
 | `db.py` | koneksi SQLite + `_migrate()` untuk kolom yang ditambah belakangan |
 | `candidates.py` | pilih server; memanggil `../servers.sh` sebagai subprocess, tidak parse cache sendiri |
-| `pia_custom.py` | profil `.ovpn` provider `pia-custom`; memanggil `../legacy-ovpn/get-pia-ovpn.sh` sebagai subprocess |
+| `pia_custom.py` | profil `.ovpn` provider `pia-custom`; memanggil `get-pia-ovpn.sh` sebagai subprocess |
+| `get-pia-ovpn.sh` | login + scrape config generator PIA; satu-satunya implementasinya, dipakai juga oleh `legacy-ovpn/daily.sh` |
 | `orchestrator.py` | `docker` CLI lewat subprocess (bukan docker-py) |
 | `probes.py` | dua jalur uji: `curl` per jam, Chrome-in-Docker harian |
 | `jobs.py` | rotasi harian & verifikasi per jam, notifikasi Discord |
@@ -121,13 +128,19 @@ Berkas per tanggung jawab:
   Job baru yang menyentuh keduanya wajib ikut didekorasi.
 - **`orchestrator.logs()` harus dipanggil sebelum `stop()`** — container yang sudah dihapus tidak
   punya log lagi.
-- **Provider `pia-custom` bukan varian `pia`, dan "server"-nya bukan hostname.** Slot ini
+- **Provider `pia-custom` bukan varian `pia`, dan kandidatnya bukan hostname.** Slot ini
   (opsional, `PIA_CUSTOM_SLOTS`, default 0 — **tambahan** di belakang `PIA_SLOTS`/`PROTON_SLOTS`,
   bukan pengganti) jalan di mode `custom` gluetun dengan profil `.ovpn` dari config generator PIA.
-  Yang dikembalikan `next_candidate()` untuk provider ini adalah kode region milik
-  `get-pia-ovpn.sh` (`PIA_CUSTOM_REGIONS`, daftar tetap) — `servers.sh` tidak dipanggil, ia cuma
-  tahu `pia|proton`. Login + scrape HTML PIA cuma boleh ada satu implementasi: `pia_custom.py`
-  shell out ke skrip itu, tidak menulis ulang. Profil di-cache dan dipakai ulang selama
+  `PIA_CUSTOM_REGIONS` memberi tahu `pia_custom.py` region mana yang cache-nya perlu disegarkan;
+  setiap file `.ovpn` ber-`remote` IP unik kemudian menjadi kandidat sendiri. Jadi dua slot boleh
+  memakai dua profil Jakarta berbeda dan profile kedua dicoba saat yang pertama gagal/blocked.
+  `servers.sh` tidak dipanggil karena ia cuma tahu `pia|proton`. Login + scrape HTML PIA cuma
+  boleh ada satu implementasi: `pia_custom.py` shell out ke skrip itu, tidak menulis ulang.
+  **`get-pia-ovpn.sh` tinggal di `pool/`, bukan `legacy-ovpn/`, karena `deploy.sh` cuma menyalin
+  `pool servers.sh` ke VM** — di luar `pool/` skrip itu tidak pernah sampai ke produksi dan tiap
+  rotasi `pia-custom` di sana gagal generate profil. `legacy-ovpn/daily.sh` yang memanggil ke
+  `../pool/`, bukan sebaliknya; jangan disalin balik supaya tidak jadi dua implementasi.
+  Profil di-cache dan dipakai ulang selama
   `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` — kalau ini jadi per percobaan kandidat, satu rotasi berarti
   login ke akun PIA sampai `POOL_MAX_TRIES` × jumlah slot kali dalam hitungan menit.
 - **Kunci WireGuard Proton wajib satu per slot** (`PROTON_KEY_SLOT_N`); tidak ada fallback ke

@@ -98,6 +98,82 @@ class PoolTest(unittest.TestCase):
             config.PIA_CUSTOM_REGIONS = self._orig_regions
         self.assertEqual(got, ["sg", "jakarta"])
 
+    def test_rotate_active_single_candidate_reuses_its_own_server(self):
+        """Rotasi slot active dengan satu kandidat tidak boleh mengecualikan
+        kandidatnya sendiri lalu berakhir "kandidat habis"."""
+        fake = Path(config.ROOT) / "servers.sh"
+        fake.write_text("#!/bin/sh\nprintf 'Server-1\\n'\n")
+        fake.chmod(0o755)
+        self._set_slot(
+            status="active", server="Server-1", exit_ip="198.51.100.1",
+        )
+
+        def stopped(slot_id):
+            # Saat container dihentikan, endpoint /proxies sudah tidak boleh
+            # menerbitkan slot ini lagi.
+            self.assertEqual(slot_id, "slot-1")
+            self.assertEqual(self._slot()["status"], "connecting")
+
+        with mock.patch("pool.jobs.orchestrator.stop", side_effect=stopped), \
+             mock.patch("pool.jobs.orchestrator.start"), \
+             mock.patch("pool.jobs.orchestrator.wait_healthy", return_value=True), \
+             mock.patch("pool.jobs.orchestrator.exit_info", return_value=("203.0.113.7", "ID", "AS test")), \
+             mock.patch("pool.jobs.probes.run_daily", return_value=("ok", "bersih")):
+            with db.connect() as conn:
+                slot = conn.execute("SELECT * FROM slots WHERE id='slot-1'").fetchone()
+                self.assertTrue(jobs.rotate_slot(conn, slot, "u", "p"))
+
+        row = self._slot()
+        self.assertEqual(row["status"], "active")
+        self.assertEqual(row["server"], "Server-1")
+        self.assertEqual(row["exit_ip"], "203.0.113.7")
+
+    def test_pia_custom_profiles_fill_two_slots_and_fallback_after_block(self):
+        """Dua profil Jakarta unik boleh aktif bersamaan; profile yang
+        diblokir dicatat gagal lalu profile berikutnya dicoba dalam rotasi
+        slot yang sama."""
+        first = Path("/cache/jakarta-udp.ovpn")
+        second = Path("/cache/jakarta-tcp.ovpn")
+        self._set_slot("slot-1", provider="pia-custom", status="dead")
+        self._set_slot("slot-2", provider="pia-custom", status="dead")
+        with mock.patch.object(config, "PIA_CUSTOM_REGIONS", ["jakarta"]), \
+             mock.patch("pool.jobs.pia_custom.ensure_profiles", return_value=[first, second]), \
+             mock.patch("pool.candidates.random.shuffle", side_effect=lambda values: None), \
+             mock.patch("pool.jobs.orchestrator.stop"), \
+             mock.patch("pool.jobs.orchestrator.start") as start, \
+             mock.patch("pool.jobs.orchestrator.wait_healthy", return_value=True), \
+             mock.patch(
+                 "pool.jobs.orchestrator.exit_info",
+                 side_effect=[("203.0.113.1", "ID", "AS test"), ("203.0.113.2", "ID", "AS test"),
+                              ("203.0.113.3", "ID", "AS test"), ("203.0.113.4", "ID", "AS test")],
+             ), \
+             mock.patch("pool.jobs.probes.run_daily", side_effect=[("ok", "-") , ("ok", "-"), ("blocked", "-"), ("ok", "-")]):
+            with db.connect() as conn:
+                slot1 = conn.execute("SELECT * FROM slots WHERE id='slot-1'").fetchone()
+                self.assertTrue(jobs.rotate_slot(conn, slot1, "u", "p"))
+                slot2 = conn.execute("SELECT * FROM slots WHERE id='slot-2'").fetchone()
+                self.assertTrue(jobs.rotate_slot(conn, slot2, "u", "p"))
+                self.assertEqual(
+                    conn.execute("SELECT server FROM slots WHERE id='slot-1'").fetchone()["server"],
+                    first.name,
+                )
+                self.assertEqual(
+                    conn.execute("SELECT server FROM slots WHERE id='slot-2'").fetchone()["server"],
+                    second.name,
+                )
+                # Bebaskan profile kedua supaya fallback satu slot dapat
+                # mengujinya setelah profile pertama diblokir.
+                conn.execute("UPDATE slots SET status='dead' WHERE id='slot-2'")
+                conn.commit()
+                # Rotasi slot-1 berikutnya: kandidat pertama diblokir, lalu
+                # kandidat kedua dipakai tanpa menunggu rotasi berikutnya.
+                slot1 = conn.execute("SELECT * FROM slots WHERE id='slot-1'").fetchone()
+                self.assertTrue(jobs.rotate_slot(conn, slot1, "u", "p"))
+
+        self.assertEqual(self._slot("slot-1")["server"], second.name)
+        selected = [call.kwargs["custom_profile"].name for call in start.call_args_list]
+        self.assertEqual(selected, [first.name, second.name, first.name, second.name])
+
     def test_orchestrator_start_sets_wireguard_mtu_for_proton(self):
         with mock.patch.object(config, "WIREGUARD_MTU", "1280"), \
              mock.patch("pool.orchestrator.subprocess.run") as run:
@@ -152,7 +228,8 @@ class PoolTest(unittest.TestCase):
     def test_pia_custom_ensure_profile_reuses_fresh_file_without_downloading(self):
         d = self._pia_custom_dir()
         f = d / "sg-aes-128-cbc-udp-ip.ovpn"
-        f.write_text("client\n")
+        f.write_text("client\nremote 198.51.100.1 1198\n")
+        pia_custom._profile_manifest("sg").touch()
         with mock.patch("pool.pia_custom.subprocess.run") as run:
             got = pia_custom.ensure_profile("sg", "u", "p")
         run.assert_not_called()
@@ -162,20 +239,27 @@ class PoolTest(unittest.TestCase):
         d = self._pia_custom_dir()
 
         def fake_run(cmd, **kwargs):
-            (d / "jakarta-aes-128-cbc-udp-ip.ovpn").write_text("client\n")
+            (d / "jakarta-aes-128-cbc-udp-ip.ovpn").write_text(
+                "client\nremote 198.51.100.1 1198\n"
+            )
             return mock.Mock(returncode=0, stdout="", stderr="")
 
         with mock.patch("pool.pia_custom.subprocess.run", side_effect=fake_run) as run:
             got = pia_custom.ensure_profile("jakarta", "u", "p")
         run.assert_called_once()
+        cmd = run.call_args.args[0]
+        self.assertEqual(cmd[:5], [str(pia_custom._GEN_SCRIPT), "-t", "all", "--dedup-ip", "-s"])
+        self.assertRegex(cmd[5], r"^pool-\d{8}T\d{6}Z$")
+        self.assertEqual(cmd[6], "jakarta")
         self.assertEqual(run.call_args.kwargs["env"]["PIA_USER"], "u")
         self.assertEqual(got.name, "jakarta-aes-128-cbc-udp-ip.ovpn")
+        self.assertTrue(pia_custom._profile_manifest("jakarta").is_file())
 
     def test_pia_custom_ensure_profile_falls_back_to_stale_on_download_failure(self):
         d = self._pia_custom_dir()
         f = d / "sg-aes-128-cbc-udp-ip.ovpn"
-        f.write_text("client\n")
-        old = time.time() - 25 * 3600  # lebih tua dari PIA_CUSTOM_PROFILE_MAX_AGE_HOURS (24)
+        f.write_text("client\nremote 198.51.100.1 1198\n")
+        old = time.time() - 13 * 3600  # lebih tua dari PIA_CUSTOM_PROFILE_MAX_AGE_HOURS (12)
         os.utime(f, (old, old))
         with mock.patch(
             "pool.pia_custom.subprocess.run",
@@ -436,6 +520,16 @@ class PoolTest(unittest.TestCase):
                 jobs._notify_pool_state(conn)
         post.assert_called_once()
         self.assertIn("sehat", post.call_args.kwargs["json"]["content"])
+
+    def test_notify_includes_hostname(self):
+        # Satu webhook dipakai beberapa pool manager - tiap pesan harus bisa
+        # dilacak ke mesin pengirimnya, bukan cuma "kolam kosong" anonim.
+        with mock.patch.object(config, "DISCORD_WEBHOOK_URL", "https://discord.example/webhook"), \
+             mock.patch.object(config, "NOTIFY_HOSTNAME", "asl-prd-prod-crawler-proxy-2"), \
+             mock.patch("pool.jobs.requests.post") as post:
+            with db.connect() as conn:
+                jobs._notify_pool_state(conn)
+        self.assertIn("asl-prd-prod-crawler-proxy-2", post.call_args.kwargs["json"]["content"])
 
     def test_notify_skips_when_webhook_unset(self):
         with mock.patch.object(config, "DISCORD_WEBHOOK_URL", None), \
