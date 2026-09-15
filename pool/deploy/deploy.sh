@@ -30,7 +30,7 @@ tsh scp -r pool servers.sh "$LOGIN@$HOST:$REMOTE/"
 tsh ssh "$LOGIN@$HOST" "rm -rf $REMOTE/pool/pool.db $REMOTE/pool/__pycache__ $REMOTE/pool/probe/__pycache__ $REMOTE/pool/probe-out"
 
 echo "==> [4/5] segarkan cache server SEA langsung dari VM (bukan salinan dari lokal)"
-tsh ssh "$LOGIN@$HOST" "cd $REMOTE && ./servers.sh pia -r >/dev/null && ./servers.sh proton -r >/dev/null && echo ok"
+tsh ssh "$LOGIN@$HOST" "cd $REMOTE && ./servers.sh pia -r >/dev/null && ./servers.sh proton -r >/dev/null && ./servers.sh nord -r >/dev/null && echo ok"
 
 echo "==> [5/5] build image probe - native amd64 di VM, tanpa emulasi QEMU"
 tsh ssh "$LOGIN@$HOST" "cd $REMOTE && docker build -t olx-pool-probe:latest pool/probe/"

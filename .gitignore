@@ -1,6 +1,7 @@
 .env
 .pia-credentials
 .proton-credentials
+.nord-credentials
 proton-wr-profile/
 legacy-ovpn/vpn-profile*/
 pool/vpn-profile/

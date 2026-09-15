@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from . import candidates, config, db, jobs, orchestrator, pia_custom
+from . import candidates, config, db, jobs, orchestrator, pia_custom, probes
 from .app import _ago, app
 
 
@@ -300,6 +300,203 @@ class PoolTest(unittest.TestCase):
         self.assertIn("WIREGUARD_PRIVATE_KEY=wgkey", cmd)
         self.assertFalse(any(a.startswith("OPENVPN_USER=") for a in cmd))
 
+    def test_orchestrator_start_nord_wireguard_uses_shared_key(self):
+        with mock.patch.object(config, "NORD_VPN_TYPE", "wireguard"), \
+             mock.patch.object(config, "WIREGUARD_MTU", "1280"), \
+             mock.patch("pool.orchestrator.subprocess.run") as run:
+            orchestrator.start("slot-7", 9007, "nord", "id62.nordvpn.com", nord_key="nk")
+        cmd = run.call_args[0][0]
+        self.assertIn("VPN_SERVICE_PROVIDER=nordvpn", cmd)
+        self.assertIn("VPN_TYPE=wireguard", cmd)
+        self.assertIn("WIREGUARD_PRIVATE_KEY=nk", cmd)
+        self.assertIn("SERVER_HOSTNAMES=id62.nordvpn.com", cmd)
+        self.assertIn("WIREGUARD_MTU=1280", cmd)
+        self.assertFalse(any(a.startswith("OPENVPN_USER=") for a in cmd))
+
+    def test_orchestrator_start_nord_openvpn_mode(self):
+        with mock.patch.object(config, "NORD_VPN_TYPE", "openvpn"), \
+             mock.patch.object(config, "OPENVPN_MSSFIX", "1280"), \
+             mock.patch("pool.orchestrator.subprocess.run") as run:
+            orchestrator.start("slot-7", 9007, "nord", "id62.nordvpn.com", nord_user="u", nord_pass="p")
+        cmd = run.call_args[0][0]
+        self.assertIn("VPN_SERVICE_PROVIDER=nordvpn", cmd)
+        self.assertIn("VPN_TYPE=openvpn", cmd)
+        self.assertIn("OPENVPN_USER=u", cmd)
+        self.assertIn("OPENVPN_PASSWORD=p", cmd)
+        self.assertIn("OPENVPN_MSSFIX=1280", cmd)
+        self.assertFalse(any(a.startswith("WIREGUARD_PRIVATE_KEY=") for a in cmd))
+
+    def test_rotate_daily_skips_nord_slot_without_key(self):
+        config.SLOT_DEFS = [("slot-1", "nord", 9001)]
+        db.init()
+        with mock.patch.object(config, "NORD_VPN_TYPE", "wireguard"), \
+             mock.patch.dict(os.environ, {}, clear=False), \
+             mock.patch("pool.jobs.rotate_slot") as rotate:
+            os.environ.pop("NORD_KEY", None)
+            with db.connect() as conn:
+                jobs.rotate_daily(conn)
+        rotate.assert_not_called()
+
+    def test_rotate_slot_passes_shared_nord_key_to_orchestrator(self):
+        config.SLOT_DEFS = [("slot-1", "nord", 9001)]
+        db.init()
+        with mock.patch.object(config, "NORD_VPN_TYPE", "wireguard"), \
+             mock.patch.dict(os.environ, {"NORD_KEY": "nk"}), \
+             mock.patch("pool.jobs.orchestrator.start") as start, \
+             mock.patch("pool.jobs.orchestrator.wait_healthy", return_value=True), \
+             mock.patch("pool.jobs.orchestrator.exit_info", return_value=("1.2.3.4", "ID", "AS1")), \
+             mock.patch("pool.jobs.probes.run_daily", return_value=("ok", "")), \
+             mock.patch("pool.jobs.orchestrator.stop"):
+            with db.connect() as conn:
+                slot = conn.execute("SELECT * FROM slots WHERE id='slot-1'").fetchone()
+                self.assertTrue(jobs.rotate_slot(conn, slot, None, None))
+        self.assertEqual(start.call_args.kwargs["nord_key"], "nk")
+        self.assertIn(start.call_args[0][3], ("Server-1", "Server-2"))
+
+    def test_nord_credentials_reads_two_line_file(self):
+        (Path(config.ROOT) / ".nord-credentials").write_text("svcuser\nsvcpass\n")
+        self.assertEqual(config.nord_credentials(), ("svcuser", "svcpass"))
+
+    def test_load_checks_reads_csv_and_skips_blank_url(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://www.olx.co.id\nkosong,\n,https://x.test/a\n")
+        got = jobs.load_checks(csv_path)
+        self.assertEqual(got, [
+            {"name": "olx", "url": "https://www.olx.co.id"},
+            {"name": "https://x.test/a", "url": "https://x.test/a"},
+        ])
+        self.assertEqual(jobs.load_checks(Path(config.ROOT) / "tidak-ada.csv"), [])
+
+    def test_check_urls_records_per_active_slot_and_leaves_status(self):
+        checks = [{"name": "olx", "url": "https://www.olx.co.id"}]
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.execute("UPDATE slots SET status='blocked' WHERE id='slot-2'")
+            conn.commit()
+        fake = [{"name": "olx", "url": "https://www.olx.co.id", "verdict": "empty",
+                 "detail": "0 markers", "bukti": ["a.html", "a.png"]}]
+        with mock.patch("pool.jobs.load_checks", return_value=checks), \
+             mock.patch("pool.jobs.probes.run_checks", return_value=fake) as run:
+            with db.connect() as conn:
+                jobs.check_urls(conn)
+        run.assert_called_once_with(9001, "slot-1", checks)
+        with db.connect() as conn:
+            rows = conn.execute("SELECT * FROM checks").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["slot_id"], rows[0]["verdict"], rows[0]["bukti"]),
+                         ("slot-1", "empty", "a.html,a.png"))
+        # non-gating: vonis 'empty' tidak mengubah status slot
+        self.assertEqual(self._slot("slot-1")["status"], "active")
+
+    def test_load_checks_skips_duplicate_names(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://a.test\nolx,https://b.test\n")
+        self.assertEqual(jobs.load_checks(csv_path), [{"name": "olx", "url": "https://a.test"}])
+
+    def test_run_checks_timeout_scales_and_removes_container(self):
+        checks = [{"name": str(i), "url": f"https://{i}.test"} for i in range(5)]
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append((cmd, kw))
+            if cmd[:2] == ["docker", "run"]:
+                raise probes.subprocess.TimeoutExpired(cmd, kw["timeout"], output=b"")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch("pool.probes.subprocess.run", side_effect=fake_run):
+            got = probes.run_checks(9001, "slot-1", checks)
+        run_cmd, run_kw = calls[0]
+        self.assertEqual(run_kw["timeout"], probes.CHECK_TIMEOUT_BASE + 5 * probes.CHECK_TIMEOUT_PER_URL)
+        cname = run_cmd[run_cmd.index("--name") + 1]
+        self.assertEqual(calls[1][0], ["docker", "rm", "-f", cname])
+        self.assertTrue(all(g["verdict"] == "error" for g in got))
+
+    def test_latest_checks_hides_result_from_previous_exit(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://www.olx.co.id\n")
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active', exit_ip='1.1.1.1' WHERE id='slot-1'")
+            conn.execute("INSERT INTO checks (run_at, slot_id, exit_ip, name, url, verdict, detail, bukti) "
+                         "VALUES ('2026-01-01T00:00:00+00:00','slot-1','9.9.9.9','olx','https://www.olx.co.id','ok','','')")
+            conn.commit()
+        with mock.patch.object(config, "CHECKS_CSV", str(csv_path)):
+            self.assertEqual(app.test_client().get("/checks.json").get_json(), [])
+            page = app.test_client().get("/").get_data(as_text=True)
+        self.assertIn("exit berganti sejak cek terakhir", page)
+
+    def test_check_one_name_with_slash_routes(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\n,https://x.test/a/b\n")
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.commit()
+        fake = [{"name": "https://x.test/a/b", "url": "https://x.test/a/b", "verdict": "ok", "detail": "", "bukti": []}]
+        with mock.patch.object(config, "CHECKS_CSV", str(csv_path)), \
+             mock.patch("pool.jobs.probes.run_checks", return_value=fake):
+            r = app.test_client().post("/jobs/check/https://x.test/a/b")
+        self.assertEqual(r.status_code, 200)
+
+    def test_run_checks_fills_error_when_container_gives_no_output(self):
+        checks = [{"name": "a", "url": "https://a.test"}, {"name": "b", "url": "https://b.test"}]
+        done = mock.Mock(stdout='{"name": "a", "url": "https://a.test", "verdict": "ok", "detail": "x", "bukti": []}\n',
+                         stderr="chrome mati", returncode=0)
+        with mock.patch("pool.probes.subprocess.run", return_value=done):
+            got = probes.run_checks(9001, "slot-1", checks)
+        self.assertEqual([g["verdict"] for g in got], ["ok", "error"])
+        self.assertIn("chrome mati", got[1]["detail"])
+
+    def test_checks_json_serves_latest_per_slot_and_name(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://www.olx.co.id\nm123,https://m.test\n")
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.execute("INSERT INTO checks (run_at, slot_id, name, url, verdict, detail, bukti) "
+                         "VALUES ('2026-01-01T00:00:00+00:00','slot-1','olx','https://www.olx.co.id','ok','','')")
+            conn.execute("INSERT INTO checks (run_at, slot_id, name, url, verdict, detail, bukti) "
+                         "VALUES ('2026-01-02T00:00:00+00:00','slot-1','olx','https://www.olx.co.id','empty','','x.html')")
+            conn.commit()
+        with mock.patch.object(config, "CHECKS_CSV", str(csv_path)):
+            r = app.test_client().get("/checks.json")
+            page = app.test_client().get("/").get_data(as_text=True)
+        self.assertEqual(r.status_code, 200)
+        # cuma yang sudah dicek, dan hanya hasil terbarunya
+        self.assertEqual([(d["name"], d["verdict"], d["bukti"]) for d in r.get_json()],
+                         [("olx", "empty", ["/probe-out/x.html"])])
+        self.assertIn("Cek URL sekarang", page)
+        self.assertIn("gagal &middot; empty", page)
+        # nama yang belum dicek tetap punya baris + tombol Cek
+        self.assertIn("belum dicek", page)
+        self.assertIn('action="/jobs/check/m123"', page)
+
+    def test_checks_json_hides_result_when_csv_url_changes(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://new.example.test\n")
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.execute("INSERT INTO checks (run_at, slot_id, name, url, verdict, detail, bukti) "
+                         "VALUES ('2026-01-01T00:00:00+00:00','slot-1','olx','https://old.example.test','ok','old result','')")
+            conn.commit()
+        with mock.patch.object(config, "CHECKS_CSV", str(csv_path)):
+            response = app.test_client().get("/checks.json")
+            page = app.test_client().get("/").get_data(as_text=True)
+        self.assertEqual(response.get_json(), [])
+        self.assertIn("https://new.example.test", page)
+        self.assertIn("belum dicek", page)
+        self.assertNotIn("old result", page)
+
+    def test_check_one_name_runs_only_that_name(self):
+        csv_path = Path(config.ROOT) / "checks.csv"
+        csv_path.write_text("name,url\nolx,https://www.olx.co.id\nm123,https://m.test\n")
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='active' WHERE id='slot-1'")
+            conn.commit()
+        fake = [{"name": "m123", "url": "https://m.test", "verdict": "ok", "detail": "", "bukti": []}]
+        with mock.patch.object(config, "CHECKS_CSV", str(csv_path)), \
+             mock.patch("pool.jobs.probes.run_checks", return_value=fake) as run:
+            r = app.test_client().post("/jobs/check/m123")
+            bad = app.test_client().post("/jobs/check/tidak-ada")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(run.call_args[0][2], [{"name": "m123", "url": "https://m.test"}])
+        self.assertEqual(bad.status_code, 500)
+
     def test_proton_credentials_reads_two_line_file(self):
         (Path(config.ROOT) / ".proton-credentials").write_text("myuser\nmypass\n")
         self.assertEqual(config.proton_credentials(), ("myuser", "mypass"))
@@ -565,13 +762,48 @@ class PoolTest(unittest.TestCase):
     def _curl_result(rc, stdout="", stderr=""):
         return mock.Mock(returncode=rc, stdout=stdout, stderr=stderr)
 
+    def test_run_hourly_chrome_mode_uses_daily_probe_after_tunnel_check(self):
+        with mock.patch("pool.probes._curl", return_value=(0, "203.0.113.9\n", "")) as curl, \
+             mock.patch("pool.probes.run_daily", return_value=("ok", "blocked=False [bukti: x.html]")) as daily:
+            verdict, detail = probes.run_hourly(9001, slot_id="slot-1", mode="chrome")
+        self.assertEqual(verdict, "ok")
+        self.assertIn("203.0.113.9", detail)
+        self.assertIn("x.html", detail)
+        daily.assert_called_once_with(9001, "slot-1")
+        # langkah OLX tidak lagi lewat curl - cuma langkah tunnel
+        self.assertEqual(curl.call_count, 1)
+
+    def test_run_hourly_chrome_mode_error_is_inconclusive(self):
+        with mock.patch("pool.probes._curl", return_value=(0, "203.0.113.9\n", "")), \
+             mock.patch("pool.probes.run_daily", return_value=("error", "timeout 90s")):
+            verdict, detail = probes.run_hourly(9001, slot_id="slot-1", mode="chrome")
+        self.assertEqual(verdict, "inconclusive")
+        self.assertIn("timeout 90s", detail)
+
+    def test_run_hourly_chrome_mode_tunnel_down_skips_chrome(self):
+        with mock.patch("pool.probes._curl", return_value=(7, "", "Failed to connect")), \
+             mock.patch("pool.probes.run_daily") as daily:
+            verdict, _ = probes.run_hourly(9001, slot_id="slot-1", mode="chrome")
+        self.assertEqual(verdict, "connecting")
+        daily.assert_not_called()
+
+    def test_recheck_stuck_forces_curl_mode(self):
+        with db.connect() as conn:
+            conn.execute("UPDATE slots SET status='blocked' WHERE id='slot-1'")
+            conn.commit()
+        with mock.patch.object(config, "VERIFY_MODE", "chrome"), \
+             mock.patch("pool.jobs.probes.run_hourly", return_value=("inconclusive", "")) as rh:
+            with db.connect() as conn:
+                jobs.recheck_stuck(conn)
+        self.assertEqual(rh.call_args.kwargs["mode"], "curl")
+
     def test_run_hourly_ok_reports_exit_ip(self):
         from . import probes
         with mock.patch("pool.probes.subprocess.run", side_effect=[
             self._curl_result(0, "203.0.113.9\n"),   # ifconfig.me
             self._curl_result(0, "x" * 500_000),     # olx.co.id
         ]):
-            verdict, detail = probes.run_hourly(9001)
+            verdict, detail = probes.run_hourly(9001, mode="curl")
         self.assertEqual(verdict, "ok")
         self.assertIn("203.0.113.9", detail)
 
@@ -580,7 +812,7 @@ class PoolTest(unittest.TestCase):
         with mock.patch("pool.probes.subprocess.run", side_effect=[
             self._curl_result(7, "", "Failed to connect to 127.0.0.1 port 9001"),
         ]) as run:
-            verdict, detail = probes.run_hourly(9001)
+            verdict, detail = probes.run_hourly(9001, mode="curl")
         self.assertEqual(verdict, "connecting")
         # Gagal di langkah (a) harus berhenti di situ - tidak ada gunanya
         # menembak OLX lewat tunnel yang sudah terbukti mati.
@@ -595,7 +827,7 @@ class PoolTest(unittest.TestCase):
             self._curl_result(0, "146.70.14.22\n"),
             self._curl_result(92, "", "HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR"),
         ]):
-            verdict, detail = probes.run_hourly(9001)
+            verdict, detail = probes.run_hourly(9001, mode="curl")
         self.assertEqual(verdict, "inconclusive")
         self.assertIn("146.70.14.22", detail)
 
@@ -605,7 +837,7 @@ class PoolTest(unittest.TestCase):
             self._curl_result(0, "203.0.113.9\n"),
             self._curl_result(0, '<div id="referenceNum">18.abc</div>'),
         ]):
-            verdict, _ = probes.run_hourly(9001)
+            verdict, _ = probes.run_hourly(9001, mode="curl")
         self.assertEqual(verdict, "blocked")
 
     def test_run_hourly_uses_root_domain_not_search_url(self):
@@ -614,7 +846,7 @@ class PoolTest(unittest.TestCase):
             self._curl_result(0, "203.0.113.9\n"),
             self._curl_result(0, "ok"),
         ]) as run:
-            probes.run_hourly(9001)
+            probes.run_hourly(9001, mode="curl")
         urls = [call.args[0][-1] for call in run.call_args_list]
         self.assertEqual(urls, [config.IP_CHECK_URL, config.OLX_HOURLY_URL])
         self.assertNotIn(config.OLX_VALIDATE_URL, urls)

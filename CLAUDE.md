@@ -57,6 +57,7 @@ Memicu job manual tanpa menunggu jadwal:
 ```bash
 curl -X POST http://127.0.0.1:8080/jobs/rotate
 curl -X POST http://127.0.0.1:8080/jobs/verify
+curl -X POST http://127.0.0.1:8080/jobs/check         # cek URL di pool/checks.csv (non-gating)
 curl -X POST http://127.0.0.1:8080/slots/slot-1/bad   # konsumen lapor IP kena deny
 ```
 
@@ -74,8 +75,10 @@ probes.run_daily()           → Chrome di container probe ⇒ ok | blocked | er
                                ⇒ slot active + tulis exit_ip/negara/org
 ```
 
-`verify_hourly` menjalankan `probes.run_hourly` (curl saja) pada slot active/connecting;
-`recheck_stuck` melakukan hal yang sama tiap 5 menit khusus slot non-aktif. Keduanya lewat
+`verify_hourly` menjalankan `probes.run_hourly` pada slot active/connecting: langkah tunnel
+(`IP_CHECK_URL`) selalu curl, langkah OLX ikut `POOL_VERIFY_MODE` — `chrome` (default, =
+`run_daily`, bukti tersimpan) atau `curl`. `recheck_stuck` melakukan hal yang sama tiap 5 menit
+khusus slot non-aktif, **selalu mode curl** (12×/jam terlalu mahal untuk Chrome). Keduanya lewat
 `jobs._apply_hourly_verdict()`, yang memegang seluruh aturan status — baca itu sebelum
 mengubah perilaku probe.
 
@@ -92,8 +95,9 @@ Berkas per tanggung jawab:
 | `probes.py` | dua jalur uji: `curl` per jam, Chrome-in-Docker harian |
 | `jobs.py` | rotasi harian & verifikasi per jam, notifikasi Discord |
 | `scheduler.py` | dua `threading.Timer` loop, sengaja bukan Celery/APScheduler |
-| `app.py` | Flask: `/proxies`, `/proxies.json`, `/slots`, `/probes`, `/health`, `/probe-out/<f>`, halaman pantau `/` |
+| `app.py` | Flask: `/proxies`, `/proxies.json`, `/slots`, `/probes`, `/checks.json`, `/health`, `/probe-out/<f>`, halaman pantau `/` |
 | `probe/olx_probe.py` | jalan **di dalam** container probe, bukan di proses pool |
+| `probe/url_check.py` | job **Cek URL** (`/jobs/check`): tiap baris `checks.csv` dimuat Chrome lewat tiap slot aktif; mengimpor `olx_probe.py`, hasil ke tabel `checks`, **non-gating** |
 
 ## Invarian yang gampang dilanggar
 
@@ -108,8 +112,10 @@ Berkas per tanggung jawab:
 - **Halaman deny OLX tetap HTTP 200.** Klasifikasi berbasis pola HTML (`id="referenceNum"`,
   jumlah `OLX_SEARCH_MARKERS`), bukan status code. `curl` cukup untuk memvonis *buruk*; vonis
   *bersih* butuh browser sungguhan.
-- **`run_hourly` memakai binary `curl`, bukan `requests`.** Fingerprint TLS/HTTP2 `requests`
-  disuguhi silent-timeout oleh Akamai. Jangan "rapikan" jadi library HTTP.
+- **`run_hourly` memakai binary `curl` (langkah tunnel, dan langkah OLX di mode `curl`), bukan
+  `requests`.** Fingerprint TLS/HTTP2 `requests` disuguhi silent-timeout oleh Akamai. Jangan
+  "rapikan" jadi library HTTP. Di mode `chrome`, `run_daily` yang mengembalikan `error` jatuh ke
+  `inconclusive` (tunnel sudah terbukti hidup), bukan `connecting`.
 - **Probe per jam dan probe harian sama-sama menggerbang vonis dari root domain sejak
   2026-09-03**, bukan dari halaman pencarian lagi. `mobil-bekas_c198` terbukti diredirect diam
   oleh Akamai ke homepage (200 penuh, 0/5 `OLX_SEARCH_MARKERS`, tanpa `referenceNum`) — dulu ini
@@ -145,6 +151,9 @@ Berkas per tanggung jawab:
   login ke akun PIA sampai `POOL_MAX_TRIES` × jumlah slot kali dalam hitungan menit.
 - **Kunci WireGuard Proton wajib satu per slot** (`PROTON_KEY_SLOT_N`); tidak ada fallback ke
   `PROTON_KEY` bersama. Kredensial OpenVPN Proton sebaliknya satu akun untuk semua slot.
+- **Provider `nord` (NordVPN, `NORD_SLOTS`, default 0) sengaja kebalikannya: kunci WireGuard
+  `NORD_KEY` satu untuk semua slot** — Nord tidak menerbitkan kunci per perangkat, cuma satu
+  `nordlynx_private_key` per akun. Kandidat lewat `servers.sh nord` (tabel sama dengan Proton).
 - **`next_candidate()` mengacak daftar** — tanpa itu klaster negara pertama secara abjad menghabiskan
   seluruh jatah percobaan tiap rotasi.
 - **`pool/probe/olx_probe.py` adalah salinan manual** dari `config/scrape.py` dan `utility/utility.py`

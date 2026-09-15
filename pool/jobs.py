@@ -1,5 +1,7 @@
+import csv
 import functools
 import logging
+import pathlib
 import threading
 import time
 from datetime import datetime, timezone
@@ -135,6 +137,16 @@ def rotate_slot(conn, slot, pia_user, pia_pass):
     if slot["provider"] == "proton" and config.PROTON_VPN_TYPE == "openvpn":
         proton_user, proton_pass = config.proton_credentials()
 
+    # Nord: kunci WireGuard maupun service credentials sama-sama satu akun
+    # untuk semua slot (config.nord_key()/nord_credentials()) - salah satunya
+    # saja yang diisi sesuai NORD_VPN_TYPE.
+    nord_key = nord_user = nord_pass = None
+    if slot["provider"] == "nord":
+        if config.NORD_VPN_TYPE == "openvpn":
+            nord_user, nord_pass = config.nord_credentials()
+        else:
+            nord_key = config.nord_key()
+
     # Untuk pia-custom, kandidat bukan region (jakarta) melainkan nama file
     # profile cache. Cache yang punya remote IP sama disaring oleh
     # ensure_profiles(), sehingga dua slot bisa memakai dua endpoint unik dari
@@ -163,6 +175,7 @@ def rotate_slot(conn, slot, pia_user, pia_pass):
                 pia_user=pia_user, pia_pass=pia_pass, proton_key=proton_key,
                 proton_user=proton_user, proton_pass=proton_pass,
                 custom_profile=custom_profiles.get(server),
+                nord_key=nord_key, nord_user=nord_user, nord_pass=nord_pass,
             )
         except Exception as e:
             log.error("slot %s: docker run gagal untuk %s: %s", slot["id"], server, e)
@@ -241,6 +254,15 @@ def rotate_daily(conn):
             elif not config.proton_key(slot["id"]):
                 log.warning("slot %s: PROTON_KEY_%s tidak diset, dilewati", slot["id"], slot["id"].upper())
                 continue
+        if slot["provider"] == "nord":
+            if config.NORD_VPN_TYPE == "openvpn":
+                nord_user, _ = config.nord_credentials()
+                if not nord_user:
+                    log.warning("slot %s: .nord-credentials tidak ada, dilewati", slot["id"])
+                    continue
+            elif not config.nord_key():
+                log.warning("slot %s: NORD_KEY tidak diset, dilewati", slot["id"])
+                continue
         rotate_slot(conn, slot, pia_user, pia_pass)
     _notify_pool_state(conn)
 
@@ -318,11 +340,11 @@ def _apply_hourly_verdict(conn, slot, verdict, pia_user, pia_pass):
     return True
 
 
-def _verify_slots(conn, slots):
+def _verify_slots(conn, slots, mode=None):
     pia_user, pia_pass = config.pia_credentials()
     changed = False
     for slot in slots:
-        verdict, detail = probes.run_hourly(slot["port"])
+        verdict, detail = probes.run_hourly(slot["port"], slot_id=slot["id"], mode=mode)
         _log_probe(conn, slot["id"], "hourly", verdict, detail)
         # Baca ulang: rotate_slot() pada iterasi sebelumnya bisa sudah menulis
         # baris ini (mis. slot yang sama muncul lagi), jadi jangan bekerja di
@@ -353,5 +375,70 @@ def recheck_stuck(conn):
     slots = conn.execute("SELECT * FROM slots WHERE status IN ('connecting','blocked')").fetchall()
     if not slots:
         return
-    if _verify_slots(conn, slots):
+    # mode="curl" apa pun VERIFY_MODE: 12x per jam per slot macet terlalu
+    # mahal untuk Chrome, dan slot ini tidak diterbitkan - cukup curl untuk
+    # tahu ia pulih ('ok') atau masih mati; vonis Chrome-nya datang di
+    # verify_hourly berikutnya.
+    if _verify_slots(conn, slots, mode="curl"):
         _notify_pool_state(conn)
+
+
+def load_checks(path=None):
+    """[{name, url}] dari CSV (kolom name,url). Baris tanpa url dilewati;
+    file tidak ada = daftar kosong, bukan exception - tombolnya tetap boleh
+    diklik, cuma tidak ada yang dicek."""
+    path = pathlib.Path(path or config.CHECKS_CSV)
+    if not path.is_file():
+        return []
+    out, seen = [], set()
+    with path.open(newline="") as f:
+        for r in csv.DictReader(f):
+            url = (r.get("url") or "").strip()
+            if not url:
+                continue
+            name = (r.get("name") or "").strip() or url
+            # Nama adalah kunci hasil (tabel checks, tombol Cek per baris,
+            # output url_check.py) - duplikat saling menimpa diam-diam, jadi
+            # yang kedua dilewati dengan peringatan, bukan diproses ganda.
+            if name in seen:
+                log.warning("cek URL: nama duplikat '%s' di %s dilewati (%s)", name, path, url)
+                continue
+            seen.add(name)
+            out.append({"name": name, "url": url})
+    return out
+
+
+@serialized
+def check_urls(conn, names=None):
+    """Job "Cek URL": tiap URL di CHECKS_CSV (atau hanya `names`, tombol Cek
+    per baris) dites lewat SETIAP slot aktif
+    dengan Chrome (probes.run_checks). Hasil ditulis ke tabel checks dengan
+    run_at yang sama untuk satu jalannya job. NON-GATING: status slot,
+    fail_streak, dan candidates tidak disentuh - ini alat lihat "URL mana
+    yang bisa dipakai crawler lewat exit ini", bukan penentu terbit/tidak.
+    @serialized karena probe-nya memakai proxy slot yang bisa saja sedang
+    dirotasi oleh job lain."""
+    checks = load_checks()
+    if names is not None:
+        checks = [c for c in checks if c["name"] in names]
+        missing = set(names) - {c["name"] for c in checks}
+        if missing:
+            raise ValueError(f"nama tidak ada di {config.CHECKS_CSV}: {', '.join(sorted(missing))}")
+    if not checks:
+        log.warning("cek URL: %s kosong atau tidak ada", config.CHECKS_CSV)
+        return
+    slots = conn.execute("SELECT * FROM slots WHERE status='active' ORDER BY id").fetchall()
+    if not slots:
+        log.warning("cek URL: tidak ada slot aktif")
+        return
+    run_at = _now()
+    for slot in slots:
+        for r in probes.run_checks(slot["port"], slot["id"], checks):
+            conn.execute(
+                "INSERT INTO checks (run_at, slot_id, exit_ip, name, url, verdict, detail, bukti) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (run_at, slot["id"], slot["exit_ip"], r["name"], r["url"], r["verdict"],
+                 r.get("detail"), ",".join(r.get("bukti") or [])),
+            )
+            conn.commit()
+            log.info("cek URL slot %s %s: %s (%s)", slot["id"], r["name"], r["verdict"], r.get("detail"))

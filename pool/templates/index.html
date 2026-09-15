@@ -22,13 +22,13 @@
   h1 { font-size: 1.3rem; margin: 0 0 4px; }
   .sub { color: var(--ink-soft); margin: 0 0 20px; font-size: 12.5px; }
   h2 { font-size: 1rem; margin: 28px 0 10px; }
-  .actions { display: flex; gap: 10px; margin-bottom: 20px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
   button {
     font: inherit; padding: 7px 14px; border: 1px solid var(--line); border-radius: 5px;
     background: var(--surface); cursor: pointer;
   }
   button:hover { background: var(--ground); }
-  .note { color: var(--ink-soft); font-size: 12px; margin: -14px 0 20px; }
+  .note { color: var(--ink-soft); font-size: 12px; margin: 0 0 20px; }
   .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -43,8 +43,10 @@
      diperoleh - jadi netral, tidak ikut warna peringatan. */
   .pill.inconclusive { background: var(--ink-soft); color: #fff; opacity: .55; }
   .streak { font-size: 11px; font-weight: 600; color: var(--warn); margin-left: 4px; }
-  .pill.blocked, .pill.dead, .pill.error { background: var(--bad-bg); color: var(--bad); }
-  .empty { color: var(--ink-soft); padding: 16px 12px; }
+  .pill.blocked, .pill.dead, .pill.error, .pill.empty { background: var(--bad-bg); color: var(--bad); }
+  /* td.empty, bukan .empty: 'empty' juga nama vonis cek URL (.pill.empty) -
+     tanpa pembatas elemen, padding placeholder ini menimpa padding pill. */
+  td.empty { color: var(--ink-soft); padding: 16px 12px; }
   .banner { padding: 10px 14px; border-radius: 6px; margin: 0 0 16px; font-size: 13.5px; }
   .banner.ok { background: var(--ok-bg); color: var(--ok); }
   .banner.bad { background: var(--bad-bg); color: var(--bad); }
@@ -62,6 +64,10 @@
       {% set job_label = 'Verifikasi' %}
     {% elif done == 'rotate' %}
       {% set job_label = 'Rotasi' %}
+    {% elif done == 'check' %}
+      {% set job_label = 'Cek URL' %}
+    {% elif done.startswith('check:') %}
+      {% set job_label = 'Cek URL ' + done.split(':', 1)[1] %}
     {% else %}
       {% set job_label = 'Rotasi ' + done.split(':')[1] %}
     {% endif %}
@@ -72,15 +78,21 @@
     {% endif %}
   {% endif %}
 
-  <form method="post" action="/jobs/rotate" style="display:inline">
-    <input type="hidden" name="from" value="ui">
-    <button type="submit">Rotasi sekarang</button>
-  </form>
-  <form method="post" action="/jobs/verify" style="display:inline">
-    <input type="hidden" name="from" value="ui">
-    <button type="submit">Verifikasi sekarang</button>
-  </form>
-  <p class="note">Rotasi bisa makan waktu beberapa menit per slot (mencoba kandidat sampai lolos) - tombol berubah jadi "Sedang berjalan..." begitu diklik, dan halaman menunggu sampai job selesai sebelum kembali dengan status di atas.</p>
+  <div class="actions">
+    <form method="post" action="/jobs/rotate">
+      <input type="hidden" name="from" value="ui">
+      <button type="submit">Rotasi sekarang</button>
+    </form>
+    <form method="post" action="/jobs/verify">
+      <input type="hidden" name="from" value="ui">
+      <button type="submit">Verifikasi sekarang</button>
+    </form>
+    <form method="post" action="/jobs/check">
+      <input type="hidden" name="from" value="ui">
+      <button type="submit">Cek URL sekarang</button>
+    </form>
+  </div>
+  <p class="note">Rotasi = job harian: SEMUA slot (termasuk yang sehat) diganti kandidat baru sampai lolos probe Chrome - pakai tombol Rotasi di baris slot untuk satu slot saja. Verifikasi = job per jam: cek tunnel (curl), lalu OLX lewat Chrome (probe yang sama dengan rotasi, bukti tersimpan) - slot dicoret hanya kalau referenceNum terbaca atau tunnel mati {{ fail_streak_limit }}x berturut-turut. Cek URL = tiap baris pool/checks.csv dimuat dengan Chrome lewat tiap slot aktif, hasilnya tabel di bawah (tidak mengubah status slot). Semuanya bisa makan waktu beberapa menit; tombol berubah jadi "Sedang berjalan..." dan halaman menunggu sampai selesai.</p>
   <script>
     document.querySelectorAll("form").forEach(function (f) {
       f.addEventListener("submit", function () {
@@ -117,6 +129,36 @@
         </tr>
         {% else %}
         <tr><td colspan="8" class="empty">Belum ada slot terkonfigurasi.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Cek URL (hasil terbaru per URL)</h2>
+  <div class="tw">
+    <table>
+      <thead>
+        <tr><th>Slot</th><th>Nama</th><th>URL</th><th>Hasil</th><th>Detail</th><th>Bukti</th><th>Kapan</th><th>Aksi</th></tr>
+      </thead>
+      <tbody>
+        {% for c in checks %}
+        <tr>
+          <td class="mono">{{ c.slot_id }}</td>
+          <td>{{ c.name }}</td>
+          <td class="mono" style="max-width:360px;overflow:hidden;text-overflow:ellipsis"><a href="{{ c.url }}" target="_blank" rel="noopener" title="{{ c.url }}">{{ c.url }}</a></td>
+          <td>{% if c.verdict %}<span class="pill {{ c.verdict }}">{% if c.verdict == 'ok' %}berhasil{% else %}gagal &middot; {{ c.verdict }}{% endif %}</span>{% else %}<span style="color:var(--ink-soft)">belum dicek</span>{% endif %}</td>
+          <td class="detail">{{ c.detail or '' }}</td>
+          <td class="mono">{% for f in c.bukti %}<a href="/probe-out/{{ f }}" target="_blank" rel="noopener">{{ f.rsplit('.', 1)[1] }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</td>
+          <td title="{{ c.run_at or '' }}">{{ c.run_at | ago }}</td>
+          <td>
+            <form method="post" action="/jobs/check/{{ c.name | urlencode }}" style="display:inline">
+              <input type="hidden" name="from" value="ui">
+              <button type="submit" title="cek {{ c.name }} saja, lewat semua slot aktif">Cek</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="empty">Tidak ada slot aktif atau <code>pool/checks.csv</code> kosong (env <code>POOL_CHECKS_CSV</code>).</td></tr>
         {% endfor %}
       </tbody>
     </table>

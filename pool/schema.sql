@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS slots (
   id          TEXT PRIMARY KEY,
   port        INTEGER NOT NULL,
-  provider    TEXT NOT NULL,          -- pia | proton | pia-custom
+  provider    TEXT NOT NULL,          -- pia | proton | pia-custom | nord
   server      TEXT,                   -- pemilih server yang sedang terpasang
   exit_ip     TEXT,                   -- kunci dedupe antar slot
   negara      TEXT,                   -- dari ipinfo.io, buat halaman pantau
@@ -35,4 +35,19 @@ CREATE TABLE IF NOT EXISTS candidates (
   result    TEXT,                     -- ok | blocked | dup_ip | connect_fail | probe_error
   tried_at  TEXT,
   PRIMARY KEY (provider, server)
+);
+
+-- Hasil job "Cek URL" (jobs.check_urls): satu baris per (slot, URL) per
+-- jalannya job. Non-gating - tidak ada yang membaca tabel ini untuk mengubah
+-- status slot; murni untuk tabel di halaman pantau + /checks.json.
+CREATE TABLE IF NOT EXISTS checks (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_at   TEXT NOT NULL,             -- sama untuk semua baris dari satu jalannya job
+  slot_id  TEXT NOT NULL,
+  exit_ip  TEXT,                      -- exit slot saat dicek; beda dari slots.exit_ip = hasil basi
+  name     TEXT NOT NULL,             -- kolom name di CSV
+  url      TEXT NOT NULL,
+  verdict  TEXT NOT NULL,             -- ok | blocked | empty | error
+  detail   TEXT,
+  bukti    TEXT                       -- nama file di pool/probe-out/, dipisah koma
 );

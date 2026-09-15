@@ -15,12 +15,19 @@ PROTON_SLOTS = int(os.environ.get("PROTON_SLOTS", "3"))
 # region yang sama kena redirect homepage - belum tentu sistematis, jadi
 # dijalankan berdampingan supaya bisa dibandingkan, bukan menggantikan.
 PIA_CUSTOM_SLOTS = int(os.environ.get("PIA_CUSTOM_SLOTS", "0"))
+# Opsional, default 0 (mati) - provider ketiga bawaan gluetun
+# (VPN_SERVICE_PROVIDER=nordvpn). Tambahan di belakang slot lain, bukan
+# pengganti, supaya exit ASN NordVPN bisa dibandingkan berdampingan dengan
+# PIA/Proton (semua kandidat SEA PIA ada di satu ASN Datacamp - lihat
+# deploy/proxy-pool.env.example).
+NORD_SLOTS = int(os.environ.get("NORD_SLOTS", "0"))
 
 # [(slot_id, provider, port), ...] - urutan tetap, port = PORT_BASE + n.
 SLOT_DEFS = [
     (f"slot-{n}", provider, PORT_BASE + n)
     for n, provider in enumerate(
-        ["pia"] * PIA_SLOTS + ["proton"] * PROTON_SLOTS + ["pia-custom"] * PIA_CUSTOM_SLOTS,
+        ["pia"] * PIA_SLOTS + ["proton"] * PROTON_SLOTS + ["pia-custom"] * PIA_CUSTOM_SLOTS
+        + ["nord"] * NORD_SLOTS,
         start=1,
     )
 ]
@@ -101,6 +108,11 @@ OLX_HOURLY_URL = os.environ.get("OLX_HOURLY_URL", "https://www.olx.co.id/")
 # menyediakan keduanya.
 IP_CHECK_URL = os.environ.get("IP_CHECK_URL", "https://ifconfig.me/ip")
 
+# CSV daftar URL untuk job "Cek URL" (kolom: name,url) - tiap baris dites
+# lewat SETIAP slot aktif dengan Chrome (pool/probe/url_check.py), hasilnya
+# tabel di halaman pantau. Non-gating: tidak pernah mengubah status slot.
+CHECKS_CSV = os.environ.get("POOL_CHECKS_CSV", str(ROOT / "pool" / "checks.csv"))
+
 # Image sendiri (pool/probe/Dockerfile), bukan image crawler produksi - tidak
 # butuh login Harbor. Chrome-nya sejenis karena instalasinya disalin dari
 # Dockerfile crawler; kode vonisnya disalin ke pool/probe/olx_probe.py.
@@ -134,6 +146,16 @@ HEALTHY_TIMEOUT = int(os.environ.get("POOL_HEALTHY_TIMEOUT", "90"))
 # seketika, karena itu bukti langsung tentang exit IP-nya.
 FAIL_STREAK_LIMIT = int(os.environ.get("POOL_FAIL_STREAK_LIMIT", "3"))
 
+# Alat untuk langkah OLX di verifikasi per jam (tombol "Verifikasi sekarang"
+# dan job terjadwal tiap jam): 'chrome' (default) = probe browser yang sama
+# dengan rotasi (probes.run_daily, bukti html+png ikut tersimpan), 'curl' =
+# perilaku lama. Langkah tunnel (IP_CHECK_URL) tetap curl di kedua mode -
+# itu yang memisahkan 'connecting' dari 'inconclusive'. Kegagalan probe
+# Chrome (exit 2) jatuh ke 'inconclusive', bukan 'connecting': tunnelnya
+# sudah terbukti hidup di langkah sebelumnya. Biaya: ~1 menit + ~500 MB per
+# slot aktif tiap jam - recheck_stuck (tiap 5 menit) SENGAJA tetap curl.
+VERIFY_MODE = os.environ.get("POOL_VERIFY_MODE", "chrome")
+
 # Selang cek ulang khusus slot yang TIDAK aktif, detik. Jauh lebih pendek dari
 # siklus per jam: slot 'connecting' tidak menerbitkan apa pun, jadi menunggu
 # sampai 59 menit untuk tahu ia sudah pulih itu kerugian tanpa imbalan.
@@ -165,6 +187,14 @@ OPENVPN_MSSFIX = os.environ.get("OPENVPN_MSSFIX", "1280")
 # proton_credentials()). Default tetap wireguard supaya slot yang sudah jalan
 # tidak berubah perilaku diam-diam kalau env ini tidak diset.
 PROTON_VPN_TYPE = os.environ.get("PROTON_VPN_TYPE", "wireguard")
+
+# NordVPN juga bisa wireguard (default, NordLynx) atau openvpn. Beda dari
+# Proton: kedua kredensialnya SATU per akun, dibagi semua slot nord - Nord
+# tidak menerbitkan kunci WireGuard per perangkat (satu kunci diturunkan dari
+# access token akun), dan kredensial OpenVPN-nya adalah "service credentials"
+# akun. Jadi tidak ada NORD_KEY_SLOT_N; yang membatasi jumlah slot adalah
+# kuota perangkat akun Nord (default 10), bukan jumlah kunci.
+NORD_VPN_TYPE = os.environ.get("NORD_VPN_TYPE", "wireguard")
 
 
 def _credentials_from_file(env_var, filename):
@@ -204,3 +234,21 @@ def proton_key(slot_id):
     bersama - satu kunci dipakai banyak slot sekaligus adalah risiko yang sudah
     ditandai di PRD (identitas per-perangkat, bisa membentur/collide)."""
     return os.environ.get(f"PROTON_KEY_{slot_id.upper().replace('-', '_')}")
+
+
+def nord_credentials():
+    """(user, pass) OpenVPN NordVPN dari .nord-credentials - "service
+    credentials" dari https://my.nordaccount.com/dashboard/nordvpn/manual-
+    configuration/service-credentials/ (BUKAN email+password akun). Dipakai
+    kalau NORD_VPN_TYPE=openvpn; satu akun untuk semua slot nord."""
+    return _credentials_from_file("NORD_CREDENTIALS", ".nord-credentials")
+
+
+def nord_key():
+    """Kunci WireGuard (NordLynx) akun Nord, satu untuk semua slot nord - dari
+    env NORD_KEY. Diambil lewat access token akun (Manual setup -> Set up
+    NordVPN manually -> generate token, lalu
+    curl -u token:<TOKEN> https://api.nordvpn.com/v1/users/services/credentials
+    dan salin field nordlynx_private_key). Sengaja bukan per slot seperti
+    Proton: Nord memang cuma punya satu kunci per akun."""
+    return os.environ.get("NORD_KEY")

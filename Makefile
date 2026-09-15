@@ -83,7 +83,7 @@ check: lint-sh test  ## lint-sh + test - jalankan sebelum commit
 
 .PHONY: pool
 pool: $(PY)  ## Jalankan scheduler + API di :8080 (foreground)
-	@echo "slot: PIA_SLOTS/PROTON_SLOTS/PIA_CUSTOM_SLOTS - lihat pool/README.md"
+	@echo "slot: PIA_SLOTS/PROTON_SLOTS/PIA_CUSTOM_SLOTS/NORD_SLOTS - lihat pool/README.md"
 	$(POOL_RUN) pool.app
 
 .PHONY: rotate

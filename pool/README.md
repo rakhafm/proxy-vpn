@@ -48,9 +48,21 @@ Flask, tanpa build step — halaman menyegarkan diri sendiri tiap 30 detik lewat
   Setiap file profile unik adalah kandidat tersendiri: dua slot boleh memakai
   dua profile Jakarta yang berbeda, dan profile berikutnya dicoba bila yang
   pertama diblokir/gagal.
-- `servers-pia.txt` / `servers-proton.txt` di root repo sudah ada (`./servers.sh
-  pia -r`, `./servers.sh proton -r`) — pool manager membaca cache ini untuk daftar
-  kandidat, tidak menjalankan `gluetun format-servers` sendiri.
+- **Provider `nord` (NordVPN, opsional, default mati).** Provider bawaan gluetun
+  (`VPN_SERVICE_PROVIDER=nordvpn`), kandidat dari `./servers.sh nord` seperti
+  Proton. Nyalakan dengan `NORD_SLOTS=N` — slot **tambahan** di belakang provider
+  lain. Beda dari Proton, kredensialnya **satu akun untuk semua slot nord**: Nord
+  tidak menerbitkan kunci WireGuard per perangkat. Default `NORD_VPN_TYPE=wireguard`
+  butuh `NORD_KEY` = `nordlynx_private_key` akun — ambil access token di
+  <https://my.nordaccount.com/dashboard/nordvpn/manual-configuration/>, lalu
+  `curl -s -u token:<TOKEN> https://api.nordvpn.com/v1/users/services/credentials`.
+  `NORD_VPN_TYPE=openvpn` memakai *service credentials* dari halaman yang sama
+  (BUKAN email+password akun) di `.nord-credentials` (format sama seperti
+  `.pia-credentials`). Yang membatasi jumlah slot adalah kuota perangkat akun Nord.
+- `servers-pia.txt` / `servers-proton.txt` / `servers-nord.txt` di root repo sudah
+  ada (`./servers.sh pia -r`, `./servers.sh proton -r`, `./servers.sh nord -r`) —
+  pool manager membaca cache ini untuk daftar kandidat, tidak menjalankan
+  `gluetun format-servers` sendiri.
 - Image probe harian sudah di-build (lihat langsung di bawah).
 
 ## Build image probe
@@ -86,6 +98,8 @@ curl -X POST http://127.0.0.1:8080/jobs/verify
 curl http://127.0.0.1:8080/proxies
 curl http://127.0.0.1:8080/slots
 curl http://127.0.0.1:8080/probes?limit=20
+curl -X POST http://127.0.0.1:8080/jobs/check         # cek URL di pool/checks.csv lewat tiap slot aktif
+curl http://127.0.0.1:8080/checks.json                # hasil jalan terakhir
 curl -X POST http://127.0.0.1:8080/slots/slot-1/bad   # konsumen lapor IP kena deny
 ```
 
@@ -153,10 +167,12 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | Var | Default | Guna |
 |---|---|---|
 | `PIA_SLOTS` / `PROTON_SLOTS` | `3` / `3` | jumlah slot per provider |
+| `NORD_SLOTS` | `0` | slot **tambahan** provider NordVPN (server bawaan gluetun, kandidat dari `servers.sh nord`) |
 | `PIA_CUSTOM_SLOTS` | `0` | slot **tambahan** yang pakai profil `.ovpn` dari config generator PIA (mode `custom` gluetun), bukan server bawaan image |
 | `PIA_CUSTOM_REGIONS` | `sg,jakarta,kualalumpur,philippines,vietnam` | daftar region TETAP untuk menyegarkan cache `pia-custom` — setiap profile ber-IP `remote` unik dari region ini menjadi kandidat sendiri; `servers.sh` tidak dipakai |
 | `PIA_CUSTOM_PROFILE_DIR` | `pool/vpn-profile` | cache profil `.ovpn` milik pool (terpisah dari `legacy-ovpn/vpn-profile/`) |
 | `PIA_CUSTOM_PROFILE_MAX_AGE_HOURS` | `12` | umur profil sebelum di-download ulang — disetel sepanjang siklus rotasi supaya tidak login ke akun PIA berkali-kali per rotasi |
+| `POOL_CHECKS_CSV` | `pool/checks.csv` | daftar URL (kolom `name,url`) untuk job **Cek URL** — tiap URL dimuat Chrome lewat tiap slot aktif; hasil di tabel halaman pantau + `/checks.json`; non-gating |
 | `POOL_CANDIDATE_GROUP` | `sea` | grup `servers.sh` untuk kandidat — `sea`, `asia`, atau nama negara/region persis |
 | `POOL_PORT_BASE` | `9000` | port slot pertama = base+1 |
 | `POOL_API_PORT` | `8080` | port Flask |
@@ -164,6 +180,7 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | `POOL_DB` | `pool/pool.db` | path SQLite |
 | `POOL_DAILY_TIME` | `03:00` | jam rotasi, Asia/Jakarta |
 | `HOURLY_REFILL` | `0` | `1` = slot yang **diblokir** langsung dirotasi saat verifikasi per jam |
+| `POOL_VERIFY_MODE` | `chrome` | alat langkah OLX di verifikasi per jam: `chrome` (probe browser yang sama dengan rotasi, bukti tersimpan) atau `curl` (jalur lama, murah). Langkah tunnel selalu curl; `recheck_stuck` selalu curl |
 | `POOL_FAIL_STREAK_LIMIT` | `3` | berapa probe per jam gagal berturut-turut sebelum slot dicoret dari `/proxies`; `1` = perilaku lama |
 | `POOL_RECHECK_SECONDS` | `300` | selang cek ulang khusus slot yang tidak aktif |
 | `POOL_ROTATE_STUCK` | `1` | `1` = slot yang macet **`connecting`** dirotasi otomatis setelah menembus streak |
@@ -180,8 +197,11 @@ benar-benar kena deny adalah sinyal yang jauh lebih akurat daripada probe `curl`
 | `PROTON_VPN_TYPE` | `wireguard` | `wireguard` (kunci per slot) atau `openvpn` (satu akun untuk semua slot Proton) |
 | `PROTON_KEY_<SLOT>` | — | kunci WireGuard per slot Proton, wajib kalau `PROTON_VPN_TYPE=wireguard` |
 | `PROTON_CREDENTIALS` | cari `.proton-credentials` di root lalu `$HOME` | path kredensial OpenVPN/IKEv2 Proton, wajib kalau `PROTON_VPN_TYPE=openvpn` |
-| `WIREGUARD_MTU` | `1280` | MTU tunnel WireGuard Proton - kosongkan untuk pakai default gluetun |
-| `OPENVPN_MSSFIX` | `1280` | MSS clamp OpenVPN (PIA, atau Proton kalau `PROTON_VPN_TYPE=openvpn`) - kosongkan untuk pakai default gluetun |
+| `NORD_VPN_TYPE` | `wireguard` | `wireguard` (NordLynx, `NORD_KEY`) atau `openvpn` (`.nord-credentials`) — keduanya satu akun untuk semua slot nord |
+| `NORD_KEY` | — | `nordlynx_private_key` akun Nord, wajib kalau `NORD_VPN_TYPE=wireguard` |
+| `NORD_CREDENTIALS` | cari `.nord-credentials` di root lalu `$HOME` | path *service credentials* Nord, wajib kalau `NORD_VPN_TYPE=openvpn` |
+| `WIREGUARD_MTU` | `1280` | MTU tunnel WireGuard (Proton, Nord) - kosongkan untuk pakai default gluetun |
+| `OPENVPN_MSSFIX` | `1280` | MSS clamp OpenVPN (PIA, atau Proton/Nord kalau `*_VPN_TYPE=openvpn`) - kosongkan untuk pakai default gluetun |
 
 ## Self-check
 

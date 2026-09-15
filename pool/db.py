@@ -37,11 +37,20 @@ _NEW_SLOT_COLUMNS = (
 )
 
 
+# Kolom yang ditambahkan ke `checks` setelah tabelnya dibuat pertama kali
+# (exit_ip: hasil cek menceritakan exit, bukan slot - tanpa ini tabel pantau
+# menampilkan 'ok' lama untuk exit yang sudah dirotasi).
+_NEW_CHECK_COLUMNS = (
+    ("exit_ip", "TEXT"),
+)
+
+
 def _migrate(conn):
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(slots)")}
-    for col, decl in _NEW_SLOT_COLUMNS:
-        if col not in existing:
-            conn.execute(f"ALTER TABLE slots ADD COLUMN {col} {decl}")
+    for table, columns in (("slots", _NEW_SLOT_COLUMNS), ("checks", _NEW_CHECK_COLUMNS)):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for col, decl in columns:
+            if col not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 def init():

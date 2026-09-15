@@ -1,6 +1,7 @@
 """Dua jalur uji terhadap OLX, sesuai tabel 'tiga kelas jawaban' di PRD:
 `curl` cukup untuk memastikan sesuatu *buruk* (referenceNum), tapi vonis
 *bersih* butuh browser sungguhan - karena itu ada dua fungsi, bukan satu."""
+import json
 import subprocess
 from datetime import datetime, timezone
 
@@ -29,7 +30,7 @@ def _curl(port, url, timeout):
     return r.returncode, r.stdout, r.stderr.strip()[-300:]
 
 
-def run_hourly(port, timeout=15):
+def run_hourly(port, timeout=15, slot_id=None, mode=None):
     """Murah, dua langkah - memisahkan "tunnelnya mati" dari "vonisnya tidak
     diperoleh". Sebelumnya keduanya digabung: SETIAP curl exit != 0 dianggap
     'connecting', sehingga reset HTTP/2 dari Akamai (exit 92, fingerprint TLS
@@ -48,11 +49,24 @@ def run_hourly(port, timeout=15):
     tetap terjawab benar.
 
     Return (verdict, detail) - 'ok' (termasuk interstitial bm-verify, itu
-    jawaban normal untuk curl), 'blocked', 'connecting', 'inconclusive'."""
+    jawaban normal untuk curl), 'blocked', 'connecting', 'inconclusive'.
+
+    mode (default config.VERIFY_MODE): 'chrome' menjalankan langkah (b)
+    lewat run_daily() - vonis browser sungguhan, sama dengan rotasi -
+    sedangkan 'curl' adalah jalur lama. Langkah (a) selalu curl."""
     rc, body, err = _curl(port, config.IP_CHECK_URL, timeout)
     if rc != 0:
         return "connecting", f"tunnel mati - {config.IP_CHECK_URL} curl exit {rc}: {err}"
     exit_ip = body.strip().splitlines()[0][:45] if body.strip() else "?"
+
+    if (mode or config.VERIFY_MODE) == "chrome":
+        verdict, detail = run_daily(port, slot_id or f"port-{port}")
+        if verdict == "error":
+            # Chrome gagal menilai (crash, timeout, neterror) SETELAH tunnel
+            # terbukti hidup - kelasnya sama dengan curl exit 92 di jalur
+            # lama: bukan bukti tentang exit IP, status slot jangan disentuh.
+            return "inconclusive", f"tunnel sehat (exit {exit_ip}) tapi probe Chrome gagal: {detail}"
+        return verdict, f"chrome, exit {exit_ip}: {detail}"
 
     rc, body, err = _curl(port, config.OLX_HOURLY_URL, timeout)
     if rc != 0:
@@ -113,3 +127,65 @@ def run_daily(port, slot_id, timeout=90):
     if r.returncode == 1:
         return "blocked", detail
     return "error", detail
+
+
+# Batas waktu per URL di url_check.py: page load 45 s + tunggu konten 20 s +
+# screenshot; plus start Chrome sekali. Timeout container diskalakan dari
+# ini, bukan angka tetap - 4 URL di exit lambat sudah mendekati 300 s.
+CHECK_TIMEOUT_BASE = 60
+CHECK_TIMEOUT_PER_URL = 90
+
+
+def run_checks(port, slot_id, checks, timeout=None):
+    """Cek daftar URL [{name, url}] lewat proxy slot dengan Chrome - image dan
+    cara mount sama dengan run_daily(), skripnya pool/probe/url_check.py
+    (yang mengimpor olx_probe.py, jadi keduanya harus di-mount). Return list
+    dict per URL (lihat docstring url_check.py); kalau Chrome gagal start
+    atau container timeout, URL yang belum dinilai dikembalikan sebagai
+    'error' supaya tabelnya tetap lengkap, bukan bolong. Container diberi
+    --name supaya saat timeout bisa di-`rm -f` - subprocess cuma membunuh
+    klien docker, container Chrome-nya sendiri akan terus jalan."""
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"check-{slot_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    if timeout is None:
+        timeout = CHECK_TIMEOUT_BASE + CHECK_TIMEOUT_PER_URL * len(checks)
+    probe_dir = config.ROOT / "pool" / "probe"
+    cmd = [
+        "docker", "run", "--rm", "--name", name, "--network", "host",
+        "-e", f"PROXIES=http://127.0.0.1:{port}",
+        "-e", f"CHECK_URLS={json.dumps(checks)}",
+        "-e", "PROBE_OUT_DIR=/out",
+        "-e", f"PROBE_OUT_NAME={name}",
+        "-v", f"{probe_dir / 'olx_probe.py'}:/app/olx_probe.py:ro",
+        "-v", f"{probe_dir / 'url_check.py'}:/app/url_check.py:ro",
+        "-v", f"{OUT_DIR}:/out",
+        config.PROBE_IMAGE,
+        "python3", "url_check.py",
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        stdout, stderr = r.stdout, r.stderr
+    except subprocess.TimeoutExpired as e:
+        stdout, stderr = (e.stdout or ""), f"timeout {timeout}s"
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="ignore")
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+    got = {}
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                d = json.loads(line)
+                got[(d["name"], d["url"])] = d
+            except (json.JSONDecodeError, KeyError):
+                pass
+    err = stderr.strip()[-300:]
+    results = []
+    for c in checks:
+        d = got.get((c["name"], c["url"])) or {
+            "name": c["name"], "url": c["url"], "verdict": "error",
+            "detail": f"tidak dinilai: {err or 'tanpa output'}", "bukti": [],
+        }
+        results.append(d)
+    return results

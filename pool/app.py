@@ -184,6 +184,67 @@ def jobs_verify():
     return _run_job("verify", jobs.verify_hourly)
 
 
+@app.post("/jobs/check")
+def jobs_check():
+    return _run_job("check", jobs.check_urls)
+
+
+@app.post("/jobs/check/<path:name>")
+def jobs_check_one(name):
+    """Cek satu nama dari CSV saja (tombol Cek di baris tabel) - tetap lewat
+    semua slot aktif, tetap @serialized lewat check_urls. `path:` karena
+    load_checks() memakai URL sebagai nama kalau kolom name kosong, dan
+    nama berisi '/' ditolak converter default (404)."""
+    return _run_job(f"check:{name}", lambda conn: jobs.check_urls(conn, names=[name]))
+
+
+def _latest_checks(conn):
+    """Hasil TERBARU per (slot aktif, nama, URL di CSV) - bukan per jalannya job,
+    supaya cek satu nama (tombol Cek per baris) tidak menghilangkan hasil
+    nama lain dari tabel. Urutan: slot, lalu urutan baris CSV. Nama yang
+    belum pernah dicek tetap dapat baris (result None) supaya tombol Cek-nya
+    ada."""
+    # URL adalah bagian dari identitas hasil. Jika checks.csv mengganti URL
+    # tetapi mempertahankan name, hasil untuk target lama tidak boleh tampil
+    # sebagai hasil target baru sebelum target baru benar-benar diperiksa.
+    latest = {
+        (r["slot_id"], r["name"], r["url"]): r
+        for r in conn.execute(
+            "SELECT * FROM checks WHERE id IN (SELECT MAX(id) FROM checks GROUP BY slot_id, name, url)"
+        )
+    }
+    active = conn.execute("SELECT id, exit_ip FROM slots WHERE status='active' ORDER BY id").fetchall()
+    rows = []
+    for slot in active:
+        for c in jobs.load_checks():
+            r = latest.get((slot["id"], c["name"], c["url"]))
+            # Yang diuji sebenarnya exit IP, bukan slot-nya: setelah rotasi
+            # hasil lama menceritakan exit yang sudah tidak ada. Tampilkan
+            # sebagai belum dicek (dengan catatan), bukan sebagai 'ok' basi.
+            stale = r is not None and bool(r["exit_ip"]) and r["exit_ip"] != slot["exit_ip"]
+            if stale:
+                r = None
+            rows.append({
+                "slot_id": slot["id"], "name": c["name"], "url": c["url"],
+                "exit_ip": r["exit_ip"] if r else None,
+                "verdict": r["verdict"] if r else None,
+                "detail": r["detail"] if r else ("exit berganti sejak cek terakhir" if stale else None),
+                "run_at": r["run_at"] if r else None,
+                "bukti": [f for f in ((r["bukti"] if r else "") or "").split(",") if f],
+            })
+    return rows
+
+
+@app.get("/checks.json")
+def checks_json():
+    with db.connect() as conn:
+        rows = _latest_checks(conn)
+    return jsonify([
+        {**r, "bukti": [f"/probe-out/{f}" for f in r["bukti"]]}
+        for r in rows if r["verdict"] is not None
+    ])
+
+
 @app.post("/slots/<slot_id>/rotate")
 def slot_rotate(slot_id):
     # @serialized: rotasi satu slot lewat tombol pantau menyentuh Docker dan
@@ -206,8 +267,9 @@ def index():
     with db.connect() as conn:
         slot_rows = conn.execute("SELECT * FROM slots ORDER BY id").fetchall()
         probe_rows = conn.execute("SELECT * FROM probes ORDER BY id DESC LIMIT 30").fetchall()
+        check_rows = _latest_checks(conn)
     return render_template(
-        "index.html", slots=slot_rows, probes=probe_rows,
+        "index.html", slots=slot_rows, probes=probe_rows, checks=check_rows,
         fail_streak_limit=config.FAIL_STREAK_LIMIT,
     )
 

@@ -2,14 +2,14 @@
 # Daftar server yang dikenal gluetun, untuk provider bawaannya. Tidak butuh login sama
 # sekali - daftarnya tertanam di image (`format-servers`), jadi ini murni baca lokal.
 #
-# Usage: ./servers.sh <proton|pia> [-l] [-r] [sea|asia|Filter...]
+# Usage: ./servers.sh <proton|pia|nord> [-l] [-r] [sea|asia|Filter...]
 #   -l   tampilkan tabel lengkap, bukan hanya kolom pemilih server
 #   -r   segarkan cache (default: pakai cache kalau ada)
 #   grup: sea (Asia Tenggara), asia (seluruh Asia). Selain itu dicocokkan persis ke
 #         kolom pertama: nama negara untuk proton, nama region untuk pia.
 #
 # Kolom yang dicetak adalah yang dipakai gluetun untuk memilih server:
-#   proton -> hostname (SERVER_HOSTNAMES),  pia -> nama server (SERVER_NAMES)
+#   proton/nord -> hostname (SERVER_HOSTNAMES),  pia -> nama server (SERVER_NAMES)
 #
 # Contoh: ./servers.sh pia sea
 #         ./servers.sh proton -l Japan
@@ -20,7 +20,8 @@ prov=${1:-}; shift || true
 case "$prov" in
   proton) flag=-protonvpn ;;
   pia)    flag=-private-internet-access ;;
-  *) echo "usage: $0 <proton|pia> [-l] [-r] [sea|asia|Filter...]" >&2; exit 1 ;;
+  nord)   flag=-nordvpn ;;
+  *) echo "usage: $0 <proton|pia|nord> [-l] [-r] [sea|asia|Filter...]" >&2; exit 1 ;;
 esac
 CACHE="servers-$prov.txt"
 
@@ -36,12 +37,13 @@ done
 
 # Tabel kedua provider beda kolom, jadi normalkan jadi 3 kolom: grup, keterangan, pemilih.
 #   proton: | Country | Region | City | Hostname | VPN | ...   -> negara, kota, hostname
+#   nord:   sama persis dengan proton (Country | Region | City | Hostname | VPN | Categories)
 #   pia:    | Region | Hostname | Name | TCP | ...             -> region, hostname, nama
 if [ -n "$refresh" ] || [ ! -s "$CACHE" ]; then
   raw=$(docker run --rm qmcgaw/gluetun format-servers "$flag" 2>/dev/null)
   case "$prov" in
     # ambil baris wireguard saja; tiap server muncul dua kali (openvpn + wireguard)
-    proton) printf '%s\n' "$raw" | awk -F'|' '$6 ~ /wireguard/ {
+    proton|nord) printf '%s\n' "$raw" | awk -F'|' '$6 ~ /wireguard/ {
                for (i=2;i<=5;i++) gsub(/^ +| +$|`/,"",$i); print $2 "\t" $4 "\t" $5 }' ;;
     pia)    printf '%s\n' "$raw" | awk -F'|' 'NR>2 {
                for (i=2;i<=4;i++) gsub(/^ +| +$|`/,"",$i); print $2 "\t" $3 "\t" $4 }' ;;
@@ -55,6 +57,12 @@ case "$prov" in
   proton)
     sea="Brunei Darussalam|Cambodia|Indonesia|Lao People's Democratic Republic|Malaysia|Myanmar|Philippines|Singapore|Thailand|Vietnam"
     asia="Afghanistan|Armenia|Azerbaijan|Bahrain|Bangladesh|Bhutan|Brunei Darussalam|Cambodia|Cyprus|Georgia|Hong Kong|India|Indonesia|Iraq|Israel|Japan|Jordan|Kazakhstan|Korea|Kuwait|Kyrgyzstan|Lao People's Democratic Republic|Lebanon|Macao|Malaysia|Mongolia|Myanmar|Nepal|Oman|Pakistan|Palestine, State of|Philippines|Qatar|Saudi Arabia|Singapore|Sri Lanka|Syrian Arab Republic|Taiwan|Tajikistan|Thailand|Turkey|Turkmenistan|United Arab Emirates|Uzbekistan|Vietnam|Yemen" ;;
+  nord)
+    # nama negara Nord = Proton kecuali "South Korea" (Proton: "Korea"), dan tanpa
+    # Timur Tengah/Asia Tengah - daftar asia di bawah hanya yang benar-benar ada
+    # di format-servers -nordvpn (2026-09-15).
+    sea="Brunei Darussalam|Cambodia|Indonesia|Lao People's Democratic Republic|Malaysia|Myanmar|Philippines|Singapore|Thailand|Vietnam"
+    asia="Brunei Darussalam|Cambodia|Hong Kong|India|Indonesia|Japan|Lao People's Democratic Republic|Malaysia|Myanmar|Philippines|Singapore|South Korea|Taiwan|Thailand|Vietnam" ;;
   pia)
     sea="Singapore|Indonesia|Malaysia|Philippines|SG Streaming Optimized|Vietnam"
     asia="Armenia|Bangladesh|Cambodia|China|Cyprus|Georgia|Hong Kong|India|Indonesia|Israel|JP Tokyo|Kazakhstan|Macao|Malaysia|Mongolia|Nepal|Philippines|Qatar|Saudi Arabia|SG Streaming Optimized|Singapore|South Korea|Sri Lanka|Taiwan|Turkey|United Arab Emirates|Vietnam" ;;

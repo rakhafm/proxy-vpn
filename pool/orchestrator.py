@@ -16,7 +16,8 @@ def container_name(slot_id):
 
 
 def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
-          proton_key=None, proton_user=None, proton_pass=None, custom_profile=None):
+          proton_key=None, proton_user=None, proton_pass=None, custom_profile=None,
+          nord_key=None, nord_user=None, nord_pass=None):
     name = container_name(slot_id)
     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -79,6 +80,30 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
                 "-e", "VPN_TYPE=wireguard",
                 "-e", f"WIREGUARD_PRIVATE_KEY={proton_key or ''}",
                 "-e", f"SERVER_HOSTNAMES={server}",
+            ]
+            if config.WIREGUARD_MTU:
+                env += ["-e", f"WIREGUARD_MTU={config.WIREGUARD_MTU}"]
+    elif provider == "nord":
+        # Tabel format-servers -nordvpn berbentuk sama dengan Proton (tiap
+        # hostname dua baris, openvpn + wireguard), jadi cache servers-nord.txt
+        # dari servers.sh valid untuk kedua mode. Kredensial/kunci satu akun
+        # untuk semua slot - lihat config.nord_key()/nord_credentials().
+        env += [
+            "-e", "VPN_SERVICE_PROVIDER=nordvpn",
+            "-e", f"SERVER_HOSTNAMES={server}",
+        ]
+        if config.NORD_VPN_TYPE == "openvpn":
+            env += [
+                "-e", "VPN_TYPE=openvpn",
+                "-e", f"OPENVPN_USER={nord_user or ''}",
+                "-e", f"OPENVPN_PASSWORD={nord_pass or ''}",
+            ]
+            if config.OPENVPN_MSSFIX:
+                env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+        else:
+            env += [
+                "-e", "VPN_TYPE=wireguard",
+                "-e", f"WIREGUARD_PRIVATE_KEY={nord_key or ''}",
             ]
             if config.WIREGUARD_MTU:
                 env += ["-e", f"WIREGUARD_MTU={config.WIREGUARD_MTU}"]
