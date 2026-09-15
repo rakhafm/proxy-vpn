@@ -1,9 +1,10 @@
 """Kandidat server per provider, dibatasi grup `servers.sh` (default: sea).
 
-Lewat `servers.sh <provider> <grup>` apa adanya, bukan mem-parsing ulang cache
+Lewat `servers.sh <provider> <grup...>` apa adanya, bukan mem-parsing ulang cache
 `servers-<provider>.txt` sendiri - daftar negara per grup (dan kolom pemilih
 yang beda antar provider) sudah didefinisikan sekali di sana; duplikasi di sini
 cuma bikin dua tempat bisa bedrift."""
+import random
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -11,24 +12,45 @@ from . import config
 
 
 def _all_servers(provider):
+    if provider == "pia-custom":
+        # Region tetap (config.PIA_CUSTOM_REGIONS), bukan lewat servers.sh -
+        # provider ini tidak dikenal skrip itu (cuma pia|proton). "server" di
+        # sini adalah kode region punya get-pia-ovpn.sh (lihat pia_custom.py),
+        # bukan hostname/IP.
+        return list(config.PIA_CUSTOM_REGIONS)
     script = config.ROOT / "servers.sh"
+    # CANDIDATE_GROUP boleh berisi beberapa grup dipisah koma (mis. "sea,China,JP
+    # Tokyo,Hong Kong,Taiwan,South Korea") - servers.sh menerima banyak filter
+    # sekaligus sebagai argumen terpisah dan meng-OR-kan hasilnya, jadi tiap
+    # bagian diteruskan apa adanya (bukan di-split spasi, sebagian nama negara
+    # sendiri mengandung spasi).
+    groups = [g.strip() for g in config.CANDIDATE_GROUP.split(",") if g.strip()]
     r = subprocess.run(
-        [str(script), provider, config.CANDIDATE_GROUP],
+        [str(script), provider, *groups],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
         raise RuntimeError(
-            f"servers.sh {provider} {config.CANDIDATE_GROUP} gagal: {r.stderr.strip()}"
+            f"servers.sh {provider} {' '.join(groups)} gagal: {r.stderr.strip()}"
         )
     return [line.strip() for line in r.stdout.splitlines() if line.strip()]
 
 
-def next_candidate(conn, provider, in_use):
-    """Server pertama yang belum gagal BARU-BARU INI dan sedang tidak dipakai
+def next_candidate(conn, provider, in_use, servers=None):
+    """Server ACAK yang belum gagal BARU-BARU INI dan sedang tidak dipakai
     slot lain. Kegagalan lama (lebih tua dari CANDIDATE_RETRY_HOURS) tidak
     lagi mengecualikan - blokir OLX bergerak per-IP dalam hitungan jam
     (README §Temuan), jadi exclude permanen bikin daftar kandidat SEA habis
     dalam beberapa hari dan tiap rotasi berakhir 'dead'.
+
+    Diacak, bukan server pertama dari _all_servers() apa adanya: urutan itu
+    hasil `sort -u` di servers.sh (alfabetis per negara), jadi tanpa acak,
+    negara yang namanya duluan secara abjad (mis. "Hong Kong" sebelum
+    "Indonesia") SELALU kehabisan jatah POOL_MAX_TRIES duluan tiap rotasi -
+    negara lain di belakangnya tidak pernah kebagian coba sama sekali
+    (ditemukan 2026-08-24: klaster Hong Kong menghabiskan semua 5 percobaan
+    sebelum sempat mencoba Indonesia/Singapore, padahal exit Indonesia yang
+    justru terbukti paling sering lolos).
 
     Filter tanggal dilakukan di Python, bukan `datetime('now', ...)` SQLite:
     tried_at disimpan lewat isoformat() (pemisah 'T'), sedangkan datetime()
@@ -44,7 +66,12 @@ def next_candidate(conn, provider, in_use):
         )
     }
     skip = failed | set(in_use)
-    for server in _all_servers(provider):
+    # pia-custom memberi daftar file .ovpn cache yang sudah dideduplikasi,
+    # bukan daftar region. Provider lain tetap mengambil daftar dari
+    # servers.sh seperti semula.
+    servers = list(servers) if servers is not None else _all_servers(provider)
+    random.shuffle(servers)
+    for server in servers:
         if server not in skip:
             return server
     return None

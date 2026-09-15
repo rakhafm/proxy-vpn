@@ -8,12 +8,15 @@ import time
 
 import requests
 
+from . import config, pia_custom
+
 
 def container_name(slot_id):
     return f"gluetun-{slot_id}"
 
 
-def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_key=None):
+def start(slot_id, port, provider, server, pia_user=None, pia_pass=None,
+          proton_key=None, proton_user=None, proton_pass=None, custom_profile=None):
     name = container_name(slot_id)
     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -23,6 +26,7 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_
         "-e", "FIREWALL_OUTBOUND_SUBNETS=172.16.0.0/12",
         "-e", "TZ=Asia/Jakarta",
     ]
+    volumes = []
     if provider == "pia":
         env += [
             "-e", "VPN_SERVICE_PROVIDER=private internet access",
@@ -31,13 +35,53 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_
             "-e", f"OPENVPN_PASSWORD={pia_pass or ''}",
             "-e", f"SERVER_NAMES={server}",
         ]
-    elif provider == "proton":
+        if config.OPENVPN_MSSFIX:
+            env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+    elif provider == "pia-custom":
+        # `server` adalah nama file kandidat dan `custom_profile` path yang
+        # sudah dipilih jobs.rotate_slot(). Fallback hanya untuk kompatibilitas
+        # caller lama yang masih memberi kode region.
+        profile = custom_profile or pia_custom.ensure_profile(server, pia_user, pia_pass)
+        if profile is None:
+            raise RuntimeError(
+                f"profil PIA custom untuk region {server} tidak tersedia "
+                "(download gagal dan tidak ada cache lama)"
+            )
         env += [
-            "-e", "VPN_SERVICE_PROVIDER=protonvpn",
-            "-e", "VPN_TYPE=wireguard",
-            "-e", f"WIREGUARD_PRIVATE_KEY={proton_key or ''}",
-            "-e", f"SERVER_HOSTNAMES={server}",
+            "-e", "VPN_SERVICE_PROVIDER=custom",
+            "-e", "VPN_TYPE=openvpn",
+            "-e", "OPENVPN_CUSTOM_CONFIG=/gluetun/custom.conf",
+            "-e", f"OPENVPN_USER={pia_user or ''}",
+            "-e", f"OPENVPN_PASSWORD={pia_pass or ''}",
         ]
+        if config.OPENVPN_MSSFIX:
+            env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+        volumes += ["-v", f"{profile}:/gluetun/custom.conf:ro"]
+    elif provider == "proton":
+        # SERVER_HOSTNAMES sama persis untuk openvpn maupun wireguard - gluetun
+        # (format-servers) mendaftar tiap hostname Proton dua kali, satu baris
+        # per VPN_TYPE, jadi cache servers-proton.txt (yang cuma menyimpan
+        # kolom hostname, sudah tersaring lewat servers.sh) valid dipakai apa
+        # adanya untuk kedua mode - tidak perlu cache/kandidat terpisah.
+        if config.PROTON_VPN_TYPE == "openvpn":
+            env += [
+                "-e", "VPN_SERVICE_PROVIDER=protonvpn",
+                "-e", "VPN_TYPE=openvpn",
+                "-e", f"OPENVPN_USER={proton_user or ''}",
+                "-e", f"OPENVPN_PASSWORD={proton_pass or ''}",
+                "-e", f"SERVER_HOSTNAMES={server}",
+            ]
+            if config.OPENVPN_MSSFIX:
+                env += ["-e", f"OPENVPN_MSSFIX={config.OPENVPN_MSSFIX}"]
+        else:
+            env += [
+                "-e", "VPN_SERVICE_PROVIDER=protonvpn",
+                "-e", "VPN_TYPE=wireguard",
+                "-e", f"WIREGUARD_PRIVATE_KEY={proton_key or ''}",
+                "-e", f"SERVER_HOSTNAMES={server}",
+            ]
+            if config.WIREGUARD_MTU:
+                env += ["-e", f"WIREGUARD_MTU={config.WIREGUARD_MTU}"]
     else:
         raise ValueError(f"provider tidak dikenal: {provider}")
 
@@ -46,6 +90,7 @@ def start(slot_id, port, provider, server, pia_user=None, pia_pass=None, proton_
         "--cap-add=NET_ADMIN",
         "--device=/dev/net/tun:/dev/net/tun",
         "-p", f"{port}:8888",
+        *volumes,
         *env,
         "qmcgaw/gluetun:latest",
     ]

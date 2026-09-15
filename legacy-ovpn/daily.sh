@@ -27,7 +27,10 @@ fi
 export PIA_USER PIA_PASS
 
 echo "== 1/4 generate profil $today"
-./get-pia-ovpn.sh $GEN_ARGS -s "$today" "${regions[@]}"
+# Generator sekarang tinggal di pool/ (ikut ter-deploy ke VM). PIA_OUT wajib
+# absolut: skrip itu cd ke direktorinya sendiri, jadi "vpn-profile" relatif akan
+# jatuh ke pool/vpn-profile - bukan direktori jalur lama ini.
+PIA_OUT="$PWD/vpn-profile" ../pool/get-pia-ovpn.sh $GEN_ARGS -s "$today" "${regions[@]}"
 
 mapfile -t today_files < <(cd vpn-profile && ls *-"$today".ovpn 2>/dev/null)
 [ ${#today_files[@]} -gt 0 ] || { echo "tidak ada profil bersuffix $today" >&2; exit 1; }

@@ -23,18 +23,25 @@ def connect():
 
 
 # Kolom yang ditambahkan ke `slots` setelah skema awal (Fase 2: negara/ASN
-# buat halaman pantau). `CREATE TABLE IF NOT EXISTS` tidak menyentuh tabel
-# yang sudah ada, jadi pool.db lama tidak otomatis dapat kolom baru -
-# ketahuan lewat OperationalError "no such column" saat rotate. Guard ini
-# yang seharusnya ada sejak awal, bukan instruksi "hapus pool.db manual".
-_NEW_SLOT_COLUMNS = ("negara", "org")
+# buat halaman pantau; fail_streak menyusul buat toleransi probe per jam).
+# `CREATE TABLE IF NOT EXISTS` tidak menyentuh tabel yang sudah ada, jadi
+# pool.db lama tidak otomatis dapat kolom baru - ketahuan lewat
+# OperationalError "no such column" saat rotate. Guard ini yang seharusnya
+# ada sejak awal, bukan instruksi "hapus pool.db manual".
+_NEW_SLOT_COLUMNS = (
+    ("negara", "TEXT"),
+    ("org", "TEXT"),
+    # NOT NULL boleh di ALTER TABLE ADD COLUMN selama DEFAULT-nya bukan NULL;
+    # baris lama langsung terisi 0, jadi tidak perlu UPDATE susulan.
+    ("fail_streak", "INTEGER NOT NULL DEFAULT 0"),
+)
 
 
 def _migrate(conn):
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(slots)")}
-    for col in _NEW_SLOT_COLUMNS:
+    for col, decl in _NEW_SLOT_COLUMNS:
         if col not in existing:
-            conn.execute(f"ALTER TABLE slots ADD COLUMN {col} TEXT")
+            conn.execute(f"ALTER TABLE slots ADD COLUMN {col} {decl}")
 
 
 def init():

@@ -39,6 +39,10 @@
   .pill { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
   .pill.active, .pill.ok { background: var(--ok-bg); color: var(--ok); }
   .pill.connecting, .pill.dup_ip, .pill.connect_fail, .pill.probe_error { background: var(--warn-bg); color: var(--warn); }
+  /* 'inconclusive' bukan kabar buruk - tunnelnya sehat, cuma vonisnya tidak
+     diperoleh - jadi netral, tidak ikut warna peringatan. */
+  .pill.inconclusive { background: var(--ink-soft); color: #fff; opacity: .55; }
+  .streak { font-size: 11px; font-weight: 600; color: var(--warn); margin-left: 4px; }
   .pill.blocked, .pill.dead, .pill.error { background: var(--bad-bg); color: var(--bad); }
   .empty { color: var(--ink-soft); padding: 16px 12px; }
   .banner { padding: 10px 14px; border-radius: 6px; margin: 0 0 16px; font-size: 13.5px; }
@@ -54,7 +58,13 @@
 
   {% set done = request.args.get('done') %}
   {% if done %}
-    {% set job_label = 'Rotasi' if done == 'rotate' else 'Verifikasi' %}
+    {% if done == 'verify' %}
+      {% set job_label = 'Verifikasi' %}
+    {% elif done == 'rotate' %}
+      {% set job_label = 'Rotasi' %}
+    {% else %}
+      {% set job_label = 'Rotasi ' + done.split(':')[1] %}
+    {% endif %}
     {% if request.args.get('ok') == '1' %}
       <div class="banner ok">&#10003; {{ job_label }} selesai barusan.</div>
     {% else %}
@@ -85,7 +95,7 @@
   <div class="tw">
     <table>
       <thead>
-        <tr><th>Slot</th><th>Provider</th><th>Server</th><th>Exit IP</th><th>Negara / ASN</th><th>Status</th><th>Lolos terakhir</th></tr>
+        <tr><th>Slot</th><th>Provider</th><th>Server</th><th>Exit IP</th><th>Negara / ASN</th><th>Status</th><th>Lolos terakhir</th><th>Aksi</th></tr>
       </thead>
       <tbody>
         {% for s in slots %}
@@ -95,11 +105,18 @@
           <td class="mono">{{ s.server or '-' }}</td>
           <td class="mono">{{ s.exit_ip or '-' }}</td>
           <td>{{ s.negara or '-' }}{% if s.org %} &middot; {{ s.org }}{% endif %}</td>
-          <td><span class="pill {{ s.status }}">{{ s.status }}</span></td>
+          <td><span class="pill {{ s.status }}">{{ s.status }}</span>{% if s.fail_streak %}
+            <span class="streak" title="probe per jam gagal berturut-turut; slot dicoret dari daftar terbit setelah {{ fail_streak_limit }}">&times;{{ s.fail_streak }}</span>{% endif %}</td>
           <td title="{{ s.last_ok_at or '' }}">{{ s.last_ok_at | ago }}</td>
+          <td>
+            <form method="post" action="/slots/{{ s.id }}/rotate" style="display:inline">
+              <input type="hidden" name="from" value="ui">
+              <button type="submit">Rotasi</button>
+            </form>
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="7" class="empty">Belum ada slot terkonfigurasi.</td></tr>
+        <tr><td colspan="8" class="empty">Belum ada slot terkonfigurasi.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -118,7 +135,7 @@
           <td class="mono">{{ p.slot_id }}</td>
           <td>{{ p.kind }}</td>
           <td><span class="pill {{ p.verdict }}">{{ p.verdict }}</span></td>
-          <td class="detail">{{ p.detail or '' }}</td>
+          <td class="detail">{{ p.detail | linkify_bukti }}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="empty">Belum ada riwayat probe.</td></tr>

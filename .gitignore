@@ -1,7 +1,9 @@
 .env
 .pia-credentials
+.proton-credentials
 proton-wr-profile/
-legacy-ovpn/vpn-profile/
+legacy-ovpn/vpn-profile*/
+pool/vpn-profile/
 .venv-pool/
 probe-out/
 pool/probe-out/

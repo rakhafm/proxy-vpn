@@ -15,9 +15,25 @@ satunya alasan probe ini menjalankan Chrome sama sekali, bukan sekadar
 `requests`. Kalau salah satu berubah di repo crawler, sinkronkan ulang di
 sini secara manual; tidak ada mekanisme otomatis yang menjaga keduanya sama.
 
-Exit 0 = lolos (>=1 marker pipeline ditemukan)
-Exit 1 = diblokir / marker nol - halaman tidak dirender seperti hasil pencarian
-Exit 2 = error lain (proxy kosong, tunnel tidak menjawab, dst)
+Exit 0 = lolos - OLX_URL (root domain) dimuat, tanpa penanda deny
+         (id="referenceNum"). Sejak 2026-09-03 vonis dipatok ke root domain,
+         BUKAN ke OLX_SEARCH_MARKERS di halaman listing lagi: OLX/Akamai
+         terbukti me-redirect diam-diam mobil-bekas_c198 ke homepage (200
+         penuh, 0/5 marker, tanpa referenceNum) - dulu ini jatuh sebagai
+         exit 1 dan mencoret exit yang sebenarnya bersih.
+Exit 1 = diblokir - id="referenceNum" ditemukan di OLX_URL (bukan error
+         jaringan - lihat exit 2)
+Exit 2 = error lain: proxy kosong, tunnel tidak menjawab, Chrome gagal start,
+         atau halaman error jaringan bawaan Chrome (neterror, mis.
+         ERR_HTTP2_PROTOCOL_ERROR) - exit ini TIDAK menilai apa pun tentang
+         exit IP, jangan dicatat sebagai "blocked" di candidates table
+
+OLX_VALIDATE_URL (listing, default mobil-bekas_c198) ikut dites best-effort
+setelah vonis di atas selesai, murni untuk bukti/log (markers, bytes) -
+kegagalan atau 0 marker di sini TIDAK PERNAH mengubah exit code. Ini
+keputusan sadar yang melonggarkan jaminan PRD "vonis pool = vonis crawler"
+(dulu satu-satunya kriteria "lolos" adalah OLX_SEARCH_MARKERS produksi) demi
+proxy tetap terbit selama homepage-nya bersih, walau listing masih diredirect.
 """
 import os
 import sys
@@ -62,8 +78,14 @@ def _chrome_options(user_agent, proxy=None):
 
 # --- bagian probe sendiri, bukan salinan ----------------------------------
 
+# Bukan salinan dari crawler produksi - kriteria pool sendiri, sama dengan
+# _BLOCK_MARKER di pool/probes.py (cek per-jam via curl).
+_BLOCK_MARKER = 'id="referenceNum"'
+
 CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/usr/src/app/chromedriver/chromedriver")
-URL = os.environ.get("OLX_URL", "https://www.olx.co.id/mobil-bekas_c198")
+URL = os.environ.get("OLX_URL", "https://www.olx.co.id/")
+# Validasi non-gating saja - lihat docstring modul. Kosong = lewati.
+VALIDATE_URL = os.environ.get("OLX_VALIDATE_URL", "")
 PROXY = os.environ.get("PROXIES", "").splitlines()[0].strip() if os.environ.get("PROXIES") else ""
 UA = os.environ.get(
     "AGENT",
@@ -76,14 +98,15 @@ OUT_DIR = os.environ.get("PROBE_OUT_DIR", "")
 OUT_NAME = os.environ.get("PROBE_OUT_NAME", "probe")
 
 
-def _save_evidence(driver):
+def _save_evidence(driver, name=None):
     if not OUT_DIR:
         return
+    name = name or OUT_NAME
     try:
         out = Path(OUT_DIR)
         out.mkdir(parents=True, exist_ok=True)
-        (out / f"{OUT_NAME}.html").write_text(driver.page_source, errors="ignore")
-        driver.save_screenshot(str(out / f"{OUT_NAME}.png"))
+        (out / f"{name}.html").write_text(driver.page_source, errors="ignore")
+        driver.save_screenshot(str(out / f"{name}.png"))
     except Exception as e:
         print(f"gagal simpan bukti: {e}", file=sys.stderr)
 
@@ -114,17 +137,47 @@ def main():
             _save_evidence(driver)  # best-effort - mungkin cuma about:blank
             return 2
 
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, OLX_SEARCH_MARKER_SELECTOR))
-            )
-        except TimeoutException:
-            pass  # marker tidak muncul dalam waktu - halaman tetap dinilai dari isinya di bawah
+        # Selenium TIDAK melempar exception untuk error jaringan bawaan Chrome
+        # (mis. ERR_HTTP2_PROTOCOL_ERROR, ERR_CONNECTION_RESET) - halaman
+        # interstitial-nya dirender sebagai DOM biasa, jadi try/except di atas
+        # tidak pernah kena. current_url TIDAK bisa dipakai mendeteksinya:
+        # sejak "committed interstitials" (Chrome ~71+) halaman error dicommit
+        # di URL yang diminta, bukan chrome-error:// (dicoba & terbukti gagal
+        # di produksi - lihat riwayat probe 2026-08-24). Penanda yang terbukti
+        # stabil dari bukti nyata (pool/probe-out/slot-1-20260824T101039Z.html,
+        # ERR_HTTP2_PROTOCOL_ERROR): template neterror.html Chromium selalu
+        # punya id="main-frame-error". Tanpa cek ini, error transport ikut
+        # dihitung 0 marker -> divoniskan "blocked" (exit 1) dan meracuni
+        # candidates table 24 jam padahal exit IP-nya tidak pernah benar-benar
+        # dites ke OLX.
+        if 'id="main-frame-error"' in driver.page_source:
+            print(f"halaman error jaringan Chrome saat memuat {URL}", file=sys.stderr)
+            _save_evidence(driver)
+            return 2
 
-        markers = olx_search_markers(BeautifulSoup(driver.page_source, "html.parser"))
-        print(f"markers={len(markers)} bytes={len(driver.page_source)}")
+        blocked = _BLOCK_MARKER in driver.page_source
+        print(f"blocked={blocked} bytes={len(driver.page_source)}")
         _save_evidence(driver)
-        return 0 if markers else 1
+        verdict = 1 if blocked else 0
+
+        # Validasi non-gating: dicatat, tidak pernah mengubah `verdict`.
+        if VALIDATE_URL:
+            try:
+                driver.set_page_load_timeout(30)
+                driver.get(VALIDATE_URL)
+                try:
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, OLX_SEARCH_MARKER_SELECTOR))
+                    )
+                except TimeoutException:
+                    pass  # marker tidak muncul dalam waktu - tetap dinilai dari isinya di bawah
+                markers = olx_search_markers(BeautifulSoup(driver.page_source, "html.parser"))
+                print(f"validasi {VALIDATE_URL}: markers={len(markers)} bytes={len(driver.page_source)}")
+                _save_evidence(driver, name=f"{OUT_NAME}-validate")
+            except Exception as e:
+                print(f"validasi {VALIDATE_URL} gagal (non-gating): {e}", file=sys.stderr)
+
+        return verdict
     finally:
         driver.quit()
 
